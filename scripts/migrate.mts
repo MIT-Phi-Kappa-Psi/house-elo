@@ -9,7 +9,7 @@ import { schemaStatements } from "../lib/schema.js";
 const statements = schemaStatements();
 
 for (const statement of statements) {
-  await sql()([statement] as unknown as TemplateStringsArray);
+  await sql().raw(statement);
 }
 
 await closeDriver();

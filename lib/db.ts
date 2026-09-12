@@ -20,6 +20,12 @@ export type Driver = ((
   ...values: unknown[]
 ) => Query) & {
   transaction: (queries: readonly Query[]) => Promise<Row[][]>;
+  /**
+   * Run a statement that was built as a string rather than a template — the
+   * schema in migrations. Each driver has its own non-template entry point;
+   * handing either a hand-rolled TemplateStringsArray is rejected by Neon.
+   */
+  raw: (text: string, values?: unknown[]) => Promise<Row[]>;
   /** Releases pooled connections. Only the pg driver holds any. */
   end?: () => Promise<void>;
 };
@@ -69,6 +75,9 @@ function neonDriver(url: string): Driver {
   driver.transaction = (queries) =>
     sql.transaction(queries as never) as unknown as Promise<Row[][]>;
 
+  driver.raw = (text, values = []) =>
+    sql.query(text, values) as unknown as Promise<Row[]>;
+
   return driver;
 }
 
@@ -111,6 +120,11 @@ function pgDriver(url: string): Driver {
     } finally {
       client.release();
     }
+  };
+
+  driver.raw = async (text, values = []) => {
+    const result = await pool.query(text, values);
+    return result.rows as Row[];
   };
 
   driver.end = () => pool.end();

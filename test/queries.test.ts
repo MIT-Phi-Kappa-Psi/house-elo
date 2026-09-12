@@ -34,7 +34,7 @@ if (url) process.env.DATABASE_URL = url;
 before(async () => {
   if (!url) return;
   for (const statement of schemaStatements()) {
-    await sql()([statement] as unknown as TemplateStringsArray);
+    await sql().raw(statement);
   }
 });
 
