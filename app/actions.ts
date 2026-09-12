@@ -16,15 +16,8 @@ import {
   renamePlayer,
   setMatchVoided,
   createTicket,
-  deleteTicket,
-  setTicketStatus,
 } from "@/lib/queries";
-import {
-  TICKET_KINDS,
-  TICKET_STATUSES,
-  type TicketKind,
-  type TicketStatus,
-} from "@/lib/tickets";
+import { TICKET_KINDS, type TicketKind } from "@/lib/tickets";
 import { AUTH_COOKIE, expectedToken, tokenFor } from "@/lib/auth";
 import { parseNames } from "@/lib/format";
 
@@ -239,27 +232,14 @@ export async function createTicketAction(
   return { ok: "Filed. Thanks — it'll get triaged." };
 }
 
-export async function setTicketStatusAction(formData: FormData): Promise<void> {
-  const id = String(formData.get("ticketId") ?? "");
-  const status = String(formData.get("status") ?? "") as TicketStatus;
-  if (!id || !TICKET_STATUSES.includes(status)) return;
-  await setTicketStatus(id, status);
-  revalidatePath("/tickets");
-}
-
-export async function deleteTicketAction(formData: FormData): Promise<void> {
-  const id = String(formData.get("ticketId") ?? "");
-  if (!id) return;
-  await deleteTicket(id);
-  revalidatePath("/tickets");
-}
-
 export async function loginAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
   const expected = await expectedToken();
-  if (!expected) redirect("/");
+  const next = String(formData.get("next") ?? "/");
+  const destination = next.startsWith("/") ? next : "/";
+  if (!expected) redirect(destination);
 
   const password = String(formData.get("password") ?? "");
   if ((await tokenFor(password)) !== expected) {
@@ -275,6 +255,5 @@ export async function loginAction(
     path: "/",
   });
 
-  const next = String(formData.get("next") ?? "/");
-  redirect(next.startsWith("/") ? next : "/");
+  redirect(destination);
 }

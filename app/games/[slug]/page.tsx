@@ -61,15 +61,20 @@ export default async function GamePage({
             No matches logged yet.
           </div>
         ) : (
-          <div className="panel overflow-hidden">
-            <table className="w-full text-sm">
+          // Wide content scrolls inside its own box; the page body never does.
+          <div className="panel overflow-x-auto">
+            <table className="w-full min-w-[22rem] text-sm">
               <thead className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
                 <tr className="border-b border-[var(--color-line)]">
                   <th className="px-4 py-3 text-left font-medium">#</th>
                   <th className="px-4 py-3 text-left font-medium">Player</th>
                   <th className="px-4 py-3 text-right font-medium">Rating</th>
-                  <th className="px-4 py-3 text-right font-medium">W–L–D</th>
-                  <th className="px-4 py-3 text-right font-medium">Played</th>
+                  <th className="whitespace-nowrap px-4 py-3 text-right font-medium">
+                    W–L–D
+                  </th>
+                  <th className="hidden px-4 py-3 text-right font-medium sm:table-cell">
+                    Played
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -183,17 +188,17 @@ function Row({
           {row.name}
         </Link>
       </td>
-      <td className="px-4 py-3 text-right font-mono font-semibold">
+      <td className="whitespace-nowrap px-4 py-3 text-right font-mono font-semibold">
         {row.displayRating}
         <span className="ml-1 text-xs font-normal text-[var(--color-muted)]">
           ±{Math.round(row.sigma * 40)}
         </span>
       </td>
-      <td className="px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)]">
+      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)]">
         {row.wins}–{row.losses}
         {row.draws > 0 ? `–${row.draws}` : ""}
       </td>
-      <td className="px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)]">
+      <td className="hidden px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)] sm:table-cell">
         {row.matchesPlayed}
       </td>
     </tr>

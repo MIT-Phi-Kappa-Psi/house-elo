@@ -76,19 +76,23 @@ theirs.
 
 ## Tickets
 
-`/tickets` is the bug and request queue. Anyone can file one; everything filed
-is visible to everyone. Triage is a status on each ticket — `open`, `planned`,
-`done`, `declined` — so filing something is not the same as agreeing to build
-it.
+The floating **?** button on every page opens a short bug/request form. Anyone
+who can reach the site can file one.
 
-The same queue is readable from a terminal, which is how to hand it to a coding
-agent without screenshots:
+There is deliberately no page for reading them back — filing is open, the queue
+is not, so one person's report is not everyone's reading material. Tickets live
+in the database and are read and triaged from a terminal:
 
 ```bash
-npm run tickets            # all, untriaged first
-npm run tickets -- open    # just the open ones
-npm run tickets -- --json  # machine-readable
+npm run tickets                   # all, untriaged first
+npm run tickets -- open           # only that status
+npm run tickets -- --json         # machine-readable
+npm run tickets -- planned <id>   # triage: open | planned | done | declined
+npm run tickets -- rm <id>        # delete one
 ```
+
+This is also the point of the CLI: it hands the whole backlog to a coding agent
+without screenshots.
 
 ## Storage
 
@@ -149,6 +153,12 @@ whole site behind a single shared password. Leave it unset and the site is
 open. It intentionally isn't a real auth provider — that would mean another
 account and another bill.
 
+## Mobile
+
+The layout is built for a phone first: tables drop their lower-value columns
+below `sm` and scroll horizontally inside their own box rather than pushing the
+page sideways, and the ? form opens as a full-width sheet. Verified at 375×812.
+
 ## Local development
 
 Any Postgres works; the driver is chosen from the connection string (Neon's
@@ -199,8 +209,8 @@ They truncate every table between tests — point them at a throwaway database.
 | `app/actions.ts` | Server actions and all input validation. |
 | `lib/chips.ts` | Selection rules for the player chip picker. |
 | `app/players/` | Player directory, rename, and merge. |
-| `app/tickets/` | Bug and request queue. |
-| `scripts/tickets.mts` | Read the ticket queue from a terminal. |
+| `app/components/help-widget.tsx` | The floating ? and its filing form. |
+| `scripts/tickets.mts` | Read and triage the ticket queue from a terminal. |
 | `scripts/db-size.mts` | Storage use against the free-tier budget. |
 | `test/` | Engine tests, schema tests, DB integration tests. |
 

@@ -40,16 +40,24 @@ export default function PlayerDirectory({
           someone in a match.
         </div>
       ) : (
-        <div className="panel overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="panel overflow-x-auto">
+          <table className="w-full min-w-[22rem] text-sm">
             <thead className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
               <tr className="border-b border-[var(--color-line)]">
                 <th className="px-4 py-3 text-left font-medium">#</th>
                 <th className="px-4 py-3 text-left font-medium">Player</th>
-                <th className="px-4 py-3 text-right font-medium">Naked laps</th>
-                <th className="px-4 py-3 text-right font-medium">Matches</th>
-                <th className="px-4 py-3 text-right font-medium">Games</th>
-                <th className="px-4 py-3 text-right font-medium">Last played</th>
+                <th className="whitespace-nowrap px-4 py-3 text-right font-medium">
+                  Laps
+                </th>
+                <th className="hidden px-4 py-3 text-right font-medium sm:table-cell">
+                  Matches
+                </th>
+                <th className="hidden px-4 py-3 text-right font-medium sm:table-cell">
+                  Games
+                </th>
+                <th className="hidden px-4 py-3 text-right font-medium md:table-cell">
+                  Last played
+                </th>
                 <th className="px-4 py-3 text-right font-medium"></th>
               </tr>
             </thead>
@@ -75,13 +83,13 @@ export default function PlayerDirectory({
                       <span className="text-[var(--color-muted)]">0</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)]">
+                  <td className="hidden px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)] sm:table-cell">
                     {player.matchesPlayed}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)]">
+                  <td className="hidden px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)] sm:table-cell">
                     {player.gamesPlayed}
                   </td>
-                  <td className="px-4 py-3 text-right text-xs text-[var(--color-muted)]">
+                  <td className="hidden whitespace-nowrap px-4 py-3 text-right text-xs text-[var(--color-muted)] md:table-cell">
                     {player.lastPlayed ? formatDate(player.lastPlayed) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">

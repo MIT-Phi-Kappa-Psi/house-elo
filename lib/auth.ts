@@ -9,7 +9,7 @@ export function authEnabled(): boolean {
   return Boolean(process.env.HOUSE_PASSWORD);
 }
 
-/** Web Crypto so the same code runs in middleware (edge) and server actions. */
+/** Web Crypto so the same code runs in the proxy (edge) and in server actions. */
 export async function tokenFor(password: string): Promise<string> {
   const data = new TextEncoder().encode(`house_elo:${password}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
@@ -20,6 +20,5 @@ export async function tokenFor(password: string): Promise<string> {
 
 export async function expectedToken(): Promise<string | null> {
   const password = process.env.HOUSE_PASSWORD;
-  if (!password) return null;
-  return tokenFor(password);
+  return password ? tokenFor(password) : null;
 }
