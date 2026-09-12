@@ -15,7 +15,16 @@ import {
   recomputeGame,
   renamePlayer,
   setMatchVoided,
+  createTicket,
+  deleteTicket,
+  setTicketStatus,
 } from "@/lib/queries";
+import {
+  TICKET_KINDS,
+  TICKET_STATUSES,
+  type TicketKind,
+  type TicketStatus,
+} from "@/lib/tickets";
 import { AUTH_COOKIE, expectedToken, tokenFor } from "@/lib/auth";
 import { parseNames } from "@/lib/format";
 
@@ -63,7 +72,12 @@ export async function createMatchAction(
   if (!game) return { error: "Game not found." };
 
   const teamCount = Number(formData.get("teamCount") ?? game.teamsPerMatch);
-  const teams: { rank: number; playerIds: string[]; score: number | null }[] = [];
+  const teams: {
+    rank: number;
+    playerIds: string[];
+    score: number | null;
+    nakedLap: boolean;
+  }[] = [];
 
   for (let i = 0; i < teamCount; i++) {
     const names = parseNames(String(formData.get(`team-${i}-players`) ?? ""));
@@ -94,6 +108,7 @@ export async function createMatchAction(
       rank,
       playerIds: ids,
       score: rawScore === "" ? null : Number(rawScore),
+      nakedLap: formData.get(`team-${i}-nakedLap`) === "on",
     });
   }
 
@@ -201,6 +216,42 @@ export async function mergePlayersAction(
       `Merged ${source.name} into ${target.name}: ${matchesMoved} match(es) moved, ` +
       `${gamesRecomputed} game(s) recomputed.`,
   };
+}
+
+export async function createTicketAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const title = String(formData.get("title") ?? "").trim();
+  if (!title) return { error: "Give the ticket a one-line summary." };
+  if (title.length > 200) return { error: "Keep the summary under 200 characters." };
+
+  const kind = String(formData.get("kind") ?? "bug") as TicketKind;
+  if (!TICKET_KINDS.includes(kind)) return { error: "Pick a valid type." };
+
+  await createTicket({
+    title,
+    body: String(formData.get("body") ?? "").trim() || null,
+    reporter: String(formData.get("reporter") ?? "").trim() || null,
+    kind,
+  });
+  revalidatePath("/tickets");
+  return { ok: "Filed. Thanks — it'll get triaged." };
+}
+
+export async function setTicketStatusAction(formData: FormData): Promise<void> {
+  const id = String(formData.get("ticketId") ?? "");
+  const status = String(formData.get("status") ?? "") as TicketStatus;
+  if (!id || !TICKET_STATUSES.includes(status)) return;
+  await setTicketStatus(id, status);
+  revalidatePath("/tickets");
+}
+
+export async function deleteTicketAction(formData: FormData): Promise<void> {
+  const id = String(formData.get("ticketId") ?? "");
+  if (!id) return;
+  await deleteTicket(id);
+  revalidatePath("/tickets");
 }
 
 export async function loginAction(

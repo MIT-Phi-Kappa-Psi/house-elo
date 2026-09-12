@@ -111,6 +111,73 @@ export function isRatable(match: MatchInput): boolean {
   return match.teams.filter((t) => t.playerIds.length > 0).length >= 2;
 }
 
+/**
+ * Apply a single match to `states`, in place, returning its history rows.
+ *
+ * Shared by `replay` and by the incremental append path in the query layer, so
+ * the two can never disagree about what a match does to a rating.
+ */
+export function applyMatch(
+  states: Map<string, PlayerState>,
+  match: MatchInput,
+  seq: number,
+): HistoryRow[] {
+  const teams = match.teams.filter((t) => t.playerIds.length > 0);
+  if (!isRatable(match)) return [];
+
+  const playedAt = toDate(match.playedAt);
+  const history: HistoryRow[] = [];
+
+  // Snapshot pre-match display ratings so we can report per-match deltas.
+  const before = new Map<string, number>();
+  for (const team of teams) {
+    for (const playerId of team.playerIds) {
+      const state = states.get(playerId) ?? blankState(playerId);
+      states.set(playerId, state);
+      before.set(playerId, displayRating(state));
+    }
+  }
+
+  const ratingTeams = teams.map((team) =>
+    team.playerIds.map((playerId) => {
+      const s = states.get(playerId)!;
+      return { mu: s.mu, sigma: s.sigma };
+    }),
+  );
+  const ranks = teams.map((t) => t.rank);
+  const updated = rate(ratingTeams, { rank: ranks });
+
+  teams.forEach((team, teamIndex) => {
+    const outcome = outcomeFor(team.rank, ranks);
+    team.playerIds.forEach((playerId, playerIndex) => {
+      const next = updated[teamIndex][playerIndex];
+      const prev = states.get(playerId)!;
+      const state: PlayerState = {
+        playerId,
+        mu: next.mu,
+        sigma: next.sigma,
+        matchesPlayed: prev.matchesPlayed + 1,
+        wins: prev.wins + (outcome === "win" ? 1 : 0),
+        losses: prev.losses + (outcome === "loss" ? 1 : 0),
+        draws: prev.draws + (outcome === "draw" ? 1 : 0),
+      };
+      states.set(playerId, state);
+      history.push({
+        matchId: match.id,
+        playerId,
+        playedAt,
+        mu: state.mu,
+        sigma: state.sigma,
+        delta: displayRating(state) - (before.get(playerId) ?? DISPLAY_BASE),
+        outcome,
+        seq,
+      });
+    });
+  });
+
+  return history;
+}
+
 export function replay(matches: MatchInput[]): ReplayResult {
   const states = new Map<string, PlayerState>();
   const history: HistoryRow[] = [];
@@ -119,59 +186,9 @@ export function replay(matches: MatchInput[]): ReplayResult {
 
   let seq = 0;
   for (const match of ordered) {
-    const teams = match.teams.filter((t) => t.playerIds.length > 0);
     if (!isRatable(match)) continue;
-
-    const playedAt = toDate(match.playedAt);
     seq += 1;
-
-    // Snapshot the pre-match display ratings so we can report per-match deltas.
-    const before = new Map<string, number>();
-    for (const team of teams) {
-      for (const playerId of team.playerIds) {
-        const state = states.get(playerId) ?? blankState(playerId);
-        states.set(playerId, state);
-        before.set(playerId, displayRating(state));
-      }
-    }
-
-    const ratingTeams = teams.map((team) =>
-      team.playerIds.map((playerId) => {
-        const s = states.get(playerId)!;
-        return { mu: s.mu, sigma: s.sigma };
-      }),
-    );
-    const ranks = teams.map((t) => t.rank);
-
-    const updated = rate(ratingTeams, { rank: ranks });
-
-    teams.forEach((team, teamIndex) => {
-      const outcome = outcomeFor(team.rank, ranks);
-      team.playerIds.forEach((playerId, playerIndex) => {
-        const next = updated[teamIndex][playerIndex];
-        const prev = states.get(playerId)!;
-        const state: PlayerState = {
-          playerId,
-          mu: next.mu,
-          sigma: next.sigma,
-          matchesPlayed: prev.matchesPlayed + 1,
-          wins: prev.wins + (outcome === "win" ? 1 : 0),
-          losses: prev.losses + (outcome === "loss" ? 1 : 0),
-          draws: prev.draws + (outcome === "draw" ? 1 : 0),
-        };
-        states.set(playerId, state);
-        history.push({
-          matchId: match.id,
-          playerId,
-          playedAt,
-          mu: state.mu,
-          sigma: state.sigma,
-          delta: displayRating(state) - (before.get(playerId) ?? DISPLAY_BASE),
-          outcome,
-          seq,
-        });
-      });
-    });
+    history.push(...applyMatch(states, match, seq));
   }
 
   return { states, history };

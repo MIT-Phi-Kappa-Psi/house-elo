@@ -9,6 +9,7 @@ import {
 } from "@/lib/queries";
 import { displayRating } from "@/lib/rating";
 import { formatDate, formatDelta } from "@/lib/format";
+import NakedLap from "@/app/components/naked-lap";
 
 export const dynamic = "force-dynamic";
 
@@ -111,6 +112,7 @@ export default async function PlayerPage({
                         >
                           {team.players.map((p) => p.name).join(" + ")}
                         </span>
+                        {team.nakedLap && <NakedLap />}
                       </span>
                     ))}
                   </div>

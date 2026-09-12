@@ -344,6 +344,246 @@ test("a draw is stored and reflected in the record", opts, async () => {
   }
 });
 
+test("appending matches incrementally matches a full replay exactly", opts, async () => {
+  const game = await createGame({
+    name: "Incremental",
+    minTeamSize: 1,
+    maxTeamSize: 2,
+    teamsPerMatch: 2,
+    allowsDraws: true,
+  });
+  const ids: string[] = [];
+  for (const n of ["A", "B", "C", "D", "E", "F"]) {
+    ids.push((await findOrCreatePlayer(n)).id);
+  }
+
+  // Mixed shapes: 1v1, 2v2, uneven, and a draw — all appended in order, so
+  // every insert takes the incremental path.
+  const shapes: [number[], number[], number, number][] = [
+    [[0], [1], 1, 2],
+    [[0, 1], [2, 3], 1, 2],
+    [[4], [5], 2, 1],
+    [[0, 2], [4], 1, 2],
+    [[1], [3], 1, 1],
+    [[2, 3], [4, 5], 2, 1],
+  ];
+  for (const [i, [left, right, lr, rr]] of shapes.entries()) {
+    await createMatch({
+      gameId: game.id,
+      playedAt: new Date(2026, 0, i + 1),
+      teams: [
+        { rank: lr, playerIds: left.map((n) => ids[n]) },
+        { rank: rr, playerIds: right.map((n) => ids[n]) },
+      ],
+    });
+  }
+
+  const incremental = await getLeaderboard(game.id);
+  const incrementalHistory = await getPlayerHistory(game.id, ids[0]);
+
+  // Force the authoritative path and compare.
+  await recomputeGame(game.id);
+  assert.deepEqual(await getLeaderboard(game.id), incremental);
+  assert.deepEqual(await getPlayerHistory(game.id, ids[0]), incrementalHistory);
+});
+
+test("a back-dated insert falls back to the full replay", opts, async () => {
+  const game = await pool();
+  const [a, b, c] = [
+    await findOrCreatePlayer("A"),
+    await findOrCreatePlayer("B"),
+    await findOrCreatePlayer("C"),
+  ];
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 5, 1),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 0, 1),
+    teams: [
+      { rank: 1, playerIds: [c.id] },
+      { rank: 2, playerIds: [a.id] },
+    ],
+  });
+
+  const afterInsert = await getLeaderboard(game.id);
+  await recomputeGame(game.id);
+  assert.deepEqual(await getLeaderboard(game.id), afterInsert);
+
+  // Sequence numbers must follow chronology, not insertion order.
+  const history = await getPlayerHistory(game.id, a.id);
+  assert.deepEqual(
+    history.map((h) => h.outcome),
+    ["loss", "win"],
+  );
+  assert.deepEqual(
+    history.map((h) => h.seq),
+    [1, 2],
+  );
+});
+
+test("appending writes only the rows for players in that match", opts, async () => {
+  const game = await pool();
+  const [a, b, c, d] = [
+    await findOrCreatePlayer("A"),
+    await findOrCreatePlayer("B"),
+    await findOrCreatePlayer("C"),
+    await findOrCreatePlayer("D"),
+  ];
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 0, 1),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  const untouched = await sql()`
+    select updated_at from ratings where game_id = ${game.id} and player_id = ${a.id}
+  `;
+
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 0, 2),
+    teams: [
+      { rank: 1, playerIds: [c.id] },
+      { rank: 2, playerIds: [d.id] },
+    ],
+  });
+
+  const after = await sql()`
+    select updated_at from ratings where game_id = ${game.id} and player_id = ${a.id}
+  `;
+  assert.deepEqual(
+    after[0].updated_at,
+    untouched[0].updated_at,
+    "a player not in the match must not have their row rewritten",
+  );
+  assert.equal((await getLeaderboard(game.id)).length, 4);
+});
+
+test("a naked lap is stored on the team and read back with the match", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id], nakedLap: true },
+    ],
+  });
+
+  const [match] = await listMatches(game.id);
+  const winner = match.teams.find((t) => t.rank === 1)!;
+  const loser = match.teams.find((t) => t.rank === 2)!;
+  assert.equal(winner.nakedLap, false);
+  assert.equal(loser.nakedLap, true);
+});
+
+test("players are ranked by naked laps, most first", opts, async () => {
+  const game = await pool();
+  const [a, b, c] = [
+    await findOrCreatePlayer("A"),
+    await findOrCreatePlayer("B"),
+    await findOrCreatePlayer("C"),
+  ];
+  // B earns two laps, A one, C none.
+  for (const [loser, lap] of [
+    [b, true],
+    [b, true],
+    [a, true],
+    [c, false],
+  ] as const) {
+    await createMatch({
+      gameId: game.id,
+      playedAt: new Date(2026, 0, Math.floor(Math.random() * 28) + 1),
+      teams: [
+        { rank: 1, playerIds: [loser.id === a.id ? b.id : a.id] },
+        { rank: 2, playerIds: [loser.id], nakedLap: lap },
+      ],
+    });
+  }
+
+  const directory = await listPlayerDirectory();
+  assert.equal(directory[0].name, "B");
+  assert.equal(directory[0].nakedLaps, 2);
+  assert.equal(directory.find((p) => p.name === "A")!.nakedLaps, 1);
+  assert.equal(directory.find((p) => p.name === "C")!.nakedLaps, 0);
+});
+
+test("every member of a team shares its naked lap", opts, async () => {
+  const game = await createGame({
+    name: "Doubles",
+    minTeamSize: 2,
+    maxTeamSize: 2,
+    teamsPerMatch: 2,
+    allowsDraws: false,
+  });
+  const ids: Record<string, string> = {};
+  for (const n of ["A", "B", "C", "D"]) ids[n] = (await findOrCreatePlayer(n)).id;
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [ids.A, ids.B] },
+      { rank: 2, playerIds: [ids.C, ids.D], nakedLap: true },
+    ],
+  });
+
+  const directory = await listPlayerDirectory();
+  assert.equal(directory.find((p) => p.name === "C")!.nakedLaps, 1);
+  assert.equal(directory.find((p) => p.name === "D")!.nakedLaps, 1);
+  assert.equal(directory.find((p) => p.name === "A")!.nakedLaps, 0);
+});
+
+test("voiding a match withdraws its naked laps and match count", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  const matchId = await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id], nakedLap: true },
+    ],
+  });
+  assert.equal(
+    (await listPlayerDirectory()).find((p) => p.name === "B")!.nakedLaps,
+    1,
+  );
+
+  await setMatchVoided(matchId, true);
+  const after = (await listPlayerDirectory()).find((p) => p.name === "B")!;
+  assert.equal(after.nakedLaps, 0, "a voided match owes nothing");
+  assert.equal(after.matchesPlayed, 0);
+});
+
+test("merging duplicates sums their naked laps onto the survivor", opts, async () => {
+  const game = await pool();
+  const [real, typo, foe] = [
+    await findOrCreatePlayer("Jackson"),
+    await findOrCreatePlayer("Jakcson"),
+    await findOrCreatePlayer("Foe"),
+  ];
+  for (const loser of [real, typo]) {
+    await createMatch({
+      gameId: game.id,
+      playedAt: new Date(2026, 0, loser === real ? 1 : 2),
+      teams: [
+        { rank: 1, playerIds: [foe.id] },
+        { rank: 2, playerIds: [loser.id], nakedLap: true },
+      ],
+    });
+  }
+
+  await mergePlayers(typo.id, real.id);
+  const merged = (await listPlayerDirectory()).find((p) => p.name === "Jackson")!;
+  assert.equal(merged.nakedLaps, 2);
+});
+
 test("the player directory lists everyone with their activity", opts, async () => {
   const game = await pool();
   const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];

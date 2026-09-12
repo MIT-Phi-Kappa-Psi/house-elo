@@ -50,6 +50,11 @@ create table if not exists match_teams (
   constraint rank_positive check (rank >= 1)
 );
 
+-- House forfeit: the team that has to run a lap. Added after the initial
+-- schema, so it is applied as an idempotent alter rather than inside the
+-- create above, which would be skipped on an existing database.
+alter table match_teams add column if not exists naked_lap boolean not null default false;
+
 create table if not exists match_players (
   match_id   uuid not null references matches(id) on delete cascade,
   team_index int  not null,
@@ -90,3 +95,24 @@ create table if not exists rating_history (
 );
 create index if not exists rating_history_player_idx
   on rating_history (game_id, player_id, seq);
+
+-- ---------------------------------------------------------------------------
+-- Tickets. Bugs and requests filed from the app, triaged by the house.
+-- Independent of the match data; nothing here feeds ratings.
+-- ---------------------------------------------------------------------------
+
+create table if not exists tickets (
+  id         uuid primary key default gen_random_uuid(),
+  title      text not null,
+  body       text,
+  reporter   text,
+  -- 'bug' | 'idea'
+  kind       text not null default 'bug',
+  -- 'open' | 'planned' | 'done' | 'declined'
+  status     text not null default 'open',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint ticket_kind check (kind in ('bug', 'idea')),
+  constraint ticket_status check (status in ('open', 'planned', 'done', 'declined'))
+);
+create index if not exists tickets_status_idx on tickets (status, created_at desc);

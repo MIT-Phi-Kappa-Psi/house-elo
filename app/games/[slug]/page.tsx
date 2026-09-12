@@ -8,6 +8,7 @@ import {
 } from "@/lib/queries";
 import { formatDate, formatFormat } from "@/lib/format";
 import { voidMatchAction, recomputeAction } from "@/app/actions";
+import NakedLap from "@/app/components/naked-lap";
 
 export const dynamic = "force-dynamic";
 
@@ -128,6 +129,7 @@ export default async function GamePage({
                             <span className="ml-1 font-mono text-xs">({team.score})</span>
                           )}
                         </span>
+                        {team.nakedLap && <NakedLap />}
                       </span>
                     ))}
                   </div>

@@ -22,7 +22,8 @@ export default function PlayerDirectory({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--color-muted)]">
-          {players.length} {players.length === 1 ? "player" : "players"}
+          {players.length} {players.length === 1 ? "player" : "players"}, ranked by
+          naked laps
         </p>
         {players.length >= 2 && (
           <button className="btn btn-ghost" onClick={() => setMerging((m) => !m)}>
@@ -43,7 +44,9 @@ export default function PlayerDirectory({
           <table className="w-full text-sm">
             <thead className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
               <tr className="border-b border-[var(--color-line)]">
+                <th className="px-4 py-3 text-left font-medium">#</th>
                 <th className="px-4 py-3 text-left font-medium">Player</th>
+                <th className="px-4 py-3 text-right font-medium">Naked laps</th>
                 <th className="px-4 py-3 text-right font-medium">Matches</th>
                 <th className="px-4 py-3 text-right font-medium">Games</th>
                 <th className="px-4 py-3 text-right font-medium">Last played</th>
@@ -51,13 +54,25 @@ export default function PlayerDirectory({
               </tr>
             </thead>
             <tbody>
-              {players.map((player) => (
+              {players.map((player, index) => (
                 <tr key={player.id} className="border-t border-[var(--color-line)]">
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--color-muted)]">
+                    {player.nakedLaps > 0 ? index + 1 : "–"}
+                  </td>
                   <td className="px-4 py-3">
                     {editing === player.id ? (
                       <RenameForm player={player} onDone={() => setEditing(null)} />
                     ) : (
                       <span className="font-medium">{player.name}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-sm">
+                    {player.nakedLaps > 0 ? (
+                      <span className="font-semibold text-[var(--color-warn)]">
+                        {player.nakedLaps}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--color-muted)]">0</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)]">

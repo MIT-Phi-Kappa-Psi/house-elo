@@ -3,13 +3,17 @@
 import { useActionState, useState } from "react";
 import { createMatchAction, type ActionState } from "@/app/actions";
 import type { Game } from "@/lib/queries";
-import { parseNames } from "@/lib/format";
-import PlayerNamesInput from "@/app/components/player-names-input";
+import PlayerChipsInput from "@/app/components/player-chips-input";
 
-type TeamDraft = { players: string; rank: string; score: string };
+type TeamDraft = {
+  players: string[];
+  rank: string;
+  score: string;
+  nakedLap: boolean;
+};
 
 function blankTeam(index: number): TeamDraft {
-  return { players: "", rank: String(index + 1), score: "" };
+  return { players: [], rank: String(index + 1), score: "", nakedLap: false };
 }
 
 export default function MatchForm({
@@ -19,7 +23,7 @@ export default function MatchForm({
   game: Game;
   knownPlayers: string[];
 }) {
-  // Controlled, so a rejected submission does not wipe what was typed.
+  // Controlled, so a rejected submission does not wipe what was entered.
   const [teams, setTeams] = useState<TeamDraft[]>(() =>
     Array.from({ length: game.teamsPerMatch }, (_, i) => blankTeam(i)),
   );
@@ -33,7 +37,9 @@ export default function MatchForm({
       current.map((team, i) => (i === index ? { ...team, ...patch } : team)),
     );
 
-  const known = new Set(knownPlayers.map((n) => n.toLowerCase()));
+  // A player already on another team must not be offered again.
+  const takenElsewhere = (index: number) =>
+    teams.flatMap((team, i) => (i === index ? [] : team.players));
 
   const sizeHint =
     game.minTeamSize === game.maxTeamSize
@@ -50,21 +56,26 @@ export default function MatchForm({
           <div key={index} className="panel space-y-3 px-4 py-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold">Team {index + 1}</span>
-              <span className="text-xs text-[var(--color-muted)]">{sizeHint}</span>
+              <span className="text-xs text-[var(--color-muted)]">
+                {team.players.length}/{game.maxTeamSize} · {sizeHint}
+              </span>
             </div>
 
             <label className="block text-xs text-[var(--color-muted)]">
-              Players (comma separated — new names are created automatically)
-              <PlayerNamesInput
+              Players
+              <PlayerChipsInput
                 name={`team-${index}-players`}
-                placeholder="Jackson, Sam"
-                known={knownPlayers}
-                value={team.players}
+                selected={team.players}
                 onChange={(players) => update(index, { players })}
+                known={knownPlayers.filter(
+                  (p) =>
+                    !takenElsewhere(index).some(
+                      (taken) => taken.toLowerCase() === p.toLowerCase(),
+                    ),
+                )}
+                max={game.maxTeamSize}
               />
             </label>
-
-            <NameChips names={parseNames(team.players)} known={known} />
 
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs text-[var(--color-muted)]">
@@ -90,6 +101,17 @@ export default function MatchForm({
                 />
               </label>
             </div>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                name={`team-${index}-nakedLap`}
+                type="checkbox"
+                className="size-4"
+                checked={team.nakedLap}
+                onChange={(e) => update(index, { nakedLap: e.target.checked })}
+              />
+              Naked lap
+            </label>
           </div>
         ))}
       </div>
@@ -138,34 +160,5 @@ export default function MatchForm({
         {pending ? "Saving…" : "Save match"}
       </button>
     </form>
-  );
-}
-
-/**
- * Names are free text, so a typo would otherwise silently fork a player's
- * rating into a second identity. Flagging which names are new makes that
- * visible before the match is saved rather than after.
- */
-function NameChips({ names, known }: { names: string[]; known: Set<string> }) {
-  if (names.length === 0) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {names.map((name, i) => {
-        const isNew = !known.has(name.toLowerCase());
-        return (
-          <span
-            key={`${name}-${i}`}
-            className={`rounded px-1.5 py-0.5 text-xs ${
-              isNew
-                ? "bg-[#3a2f0c] text-[var(--color-warn)]"
-                : "bg-[#1b2128] text-[var(--color-muted)]"
-            }`}
-          >
-            {name}
-            {isNew && <span className="ml-1 opacity-70">new</span>}
-          </span>
-        );
-      })}
-    </div>
   );
 }

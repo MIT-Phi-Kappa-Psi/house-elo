@@ -1,11 +1,23 @@
 import { sql, q, slugify, type Row } from "./db";
 import {
+  TICKET_KINDS,
+  TICKET_STATUSES,
+  type Ticket,
+  type TicketKind,
+  type TicketStatus,
+} from "./tickets";
+
+export { TICKET_KINDS, TICKET_STATUSES };
+export type { Ticket, TicketKind, TicketStatus };
+import {
+  applyMatch,
   replay,
   displayRating,
   emptyState,
   winProbability,
   type MatchInput,
   type Outcome,
+  type PlayerState,
 } from "./rating";
 
 export type Game = {
@@ -38,12 +50,14 @@ export type MatchTeamView = {
   teamIndex: number;
   rank: number;
   score: number | null;
+  nakedLap: boolean;
   players: Player[];
 };
 
 export type PlayerDirectoryRow = Player & {
   matchesPlayed: number;
   gamesPlayed: number;
+  nakedLaps: number;
   lastPlayed: Date | null;
 };
 
@@ -112,26 +126,34 @@ export async function getPlayerBySlug(slug: string): Promise<Player | null> {
   return rows.length ? (rows[0] as Player) : null;
 }
 
-/** Every player in the system, newest activity surfaced for review. */
+/**
+ * Every player, ranked by naked laps — the house's leaderboard of shame.
+ *
+ * Both counts join through `matches` so voided matches are excluded; counting
+ * `match_players` directly would keep tallying rows whose match was voided.
+ */
 export async function listPlayerDirectory(): Promise<PlayerDirectoryRow[]> {
   const rows = await q`
     select p.id, p.slug, p.name,
-           count(mp.match_id)::int          as matches_played,
-           count(distinct m.game_id)::int   as games_played,
-           max(m.played_at)                 as last_played
+           count(m.id)::int                                       as matches_played,
+           count(distinct m.game_id)::int                         as games_played,
+           count(*) filter (where mt.naked_lap)::int              as naked_laps,
+           max(m.played_at)                                       as last_played
     from players p
     left join match_players mp on mp.player_id = p.id
     left join matches m on m.id = mp.match_id and not m.voided
+    left join match_teams mt
+      on mt.match_id = m.id and mt.team_index = mp.team_index
     group by p.id, p.slug, p.name
-    order by p.name asc
+    order by naked_laps desc, matches_played desc, p.name asc
   `;
   return rows.map((r) => ({
     id: r.id as string,
     slug: r.slug as string,
     name: r.name as string,
-    // The join produces rows for voided matches too; only dated ones counted.
-    matchesPlayed: r.last_played === null ? 0 : Number(r.matches_played),
+    matchesPlayed: Number(r.matches_played),
     gamesPlayed: Number(r.games_played),
+    nakedLaps: Number(r.naked_laps),
     lastPlayed: r.last_played ? new Date(r.last_played as string) : null,
   }));
 }
@@ -256,7 +278,7 @@ export async function getLeaderboard(gameId: string): Promise<LeaderboardRow[]> 
 export async function listMatches(gameId: string, limit = 50): Promise<MatchView[]> {
   const rows = await q`
     select m.id, m.played_at, m.note, m.voided,
-           mt.team_index, mt.rank, mt.score,
+           mt.team_index, mt.rank, mt.score, mt.naked_lap,
            p.id as player_id, p.slug as player_slug, p.name as player_name
     from matches m
     join match_teams mt on mt.match_id = m.id
@@ -275,7 +297,7 @@ export async function listMatches(gameId: string, limit = 50): Promise<MatchView
 export async function listPlayerMatches(gameId: string, playerId: string, limit = 100) {
   const rows = await q`
     select m.id, m.played_at, m.note, m.voided,
-           mt.team_index, mt.rank, mt.score,
+           mt.team_index, mt.rank, mt.score, mt.naked_lap,
            p.id as player_id, p.slug as player_slug, p.name as player_name
     from matches m
     join match_teams mt on mt.match_id = m.id
@@ -360,6 +382,7 @@ function groupMatches(rows: Row[]): MatchView[] {
         teamIndex,
         rank: Number(row.rank),
         score: row.score === null || row.score === undefined ? null : Number(row.score),
+        nakedLap: Boolean(row.naked_lap),
         players: [],
       };
       match.teams.push(team);
@@ -418,7 +441,12 @@ export async function createMatch(input: {
   gameId: string;
   playedAt?: Date;
   note?: string | null;
-  teams: { rank: number; playerIds: string[]; score?: number | null }[];
+  teams: {
+    rank: number;
+    playerIds: string[];
+    score?: number | null;
+    nakedLap?: boolean;
+  }[];
 }): Promise<string> {
   const playedAt = input.playedAt ?? new Date();
   const inserted = await q`
@@ -431,8 +459,9 @@ export async function createMatch(input: {
   const statements = [];
   for (const [teamIndex, team] of input.teams.entries()) {
     statements.push(sql()`
-      insert into match_teams (match_id, team_index, rank, score)
-      values (${matchId}, ${teamIndex}, ${team.rank}, ${team.score ?? null})
+      insert into match_teams (match_id, team_index, rank, score, naked_lap)
+      values (${matchId}, ${teamIndex}, ${team.rank}, ${team.score ?? null},
+              ${team.nakedLap ?? false})
     `);
   }
   await sql().transaction(statements);
@@ -448,8 +477,124 @@ export async function createMatch(input: {
   }
   if (playerStatements.length) await sql().transaction(playerStatements);
 
-  await recomputeGame(input.gameId);
+  await applyNewMatch(input.gameId, matchId, playedAt);
   return matchId;
+}
+
+/**
+ * Rate a freshly inserted match.
+ *
+ * A match appended at the end of the log only affects the players in it, so we
+ * write those rows and stop. Rewriting the whole projection on every insert —
+ * which is what a full replay does — costs O(matches^2) row writes over a
+ * game's life and leaves the derived tables mostly dead tuples, which matters
+ * on a storage-capped database. Anything back-dated still falls back to the
+ * full replay, because it changes the ratings of every match after it.
+ */
+async function applyNewMatch(
+  gameId: string,
+  matchId: string,
+  playedAt: Date,
+): Promise<void> {
+  const later = await q`
+    select 1 from matches
+    where game_id = ${gameId} and not voided and id <> ${matchId}
+      and (played_at, id) > (${playedAt.toISOString()}, ${matchId}::uuid)
+    limit 1
+  `;
+  if (later.length > 0) {
+    await recomputeGame(gameId);
+    return;
+  }
+
+  const rows = await q`
+    select mt.team_index, mt.rank, mp.player_id
+    from match_teams mt
+    left join match_players mp
+      on mp.match_id = mt.match_id and mp.team_index = mt.team_index
+    where mt.match_id = ${matchId}
+    order by mt.team_index asc
+  `;
+
+  const match: MatchInput = { id: matchId, playedAt, teams: [] };
+  for (const row of rows) {
+    const teamIndex = Number(row.team_index);
+    while (match.teams.length <= teamIndex) match.teams.push({ rank: 0, playerIds: [] });
+    match.teams[teamIndex].rank = Number(row.rank);
+    if (row.player_id) match.teams[teamIndex].playerIds.push(row.player_id as string);
+  }
+
+  const playerIds = match.teams.flatMap((t) => t.playerIds);
+  if (playerIds.length === 0) return;
+
+  const [existing, seqRow] = await Promise.all([
+    q`
+      select player_id, mu, sigma, matches_played, wins, losses, draws
+      from ratings
+      where game_id = ${gameId} and player_id = any(${playerIds}::uuid[])
+    `,
+    q`select coalesce(max(seq), 0) as seq from rating_history where game_id = ${gameId}`,
+  ]);
+
+  const states = new Map<string, PlayerState>(
+    existing.map((r) => [
+      r.player_id as string,
+      {
+        playerId: r.player_id as string,
+        mu: Number(r.mu),
+        sigma: Number(r.sigma),
+        matchesPlayed: Number(r.matches_played),
+        wins: Number(r.wins),
+        losses: Number(r.losses),
+        draws: Number(r.draws),
+      },
+    ]),
+  );
+
+  const history = applyMatch(states, match, Number(seqRow[0].seq) + 1);
+  if (history.length === 0) return;
+
+  const touched = [...states.values()].filter((s) => playerIds.includes(s.playerId));
+
+  await sql().transaction([
+    sql()`
+      insert into ratings
+        (game_id, player_id, mu, sigma, matches_played, wins, losses, draws, updated_at)
+      select ${gameId}, t.player_id::uuid, t.mu, t.sigma,
+             t.matches_played, t.wins, t.losses, t.draws, now()
+      from unnest(
+        ${touched.map((x) => x.playerId)}::text[],
+        ${touched.map((x) => x.mu)}::double precision[],
+        ${touched.map((x) => x.sigma)}::double precision[],
+        ${touched.map((x) => x.matchesPlayed)}::int[],
+        ${touched.map((x) => x.wins)}::int[],
+        ${touched.map((x) => x.losses)}::int[],
+        ${touched.map((x) => x.draws)}::int[]
+      ) as t(player_id, mu, sigma, matches_played, wins, losses, draws)
+      on conflict (game_id, player_id) do update set
+        mu = excluded.mu, sigma = excluded.sigma,
+        matches_played = excluded.matches_played, wins = excluded.wins,
+        losses = excluded.losses, draws = excluded.draws,
+        updated_at = now()
+    `,
+    sql()`
+      insert into rating_history
+        (game_id, player_id, match_id, played_at, seq, mu, sigma, delta, outcome)
+      select ${gameId}, t.player_id::uuid, t.match_id::uuid, t.played_at,
+             t.seq, t.mu, t.sigma, t.delta, t.outcome
+      from unnest(
+        ${history.map((h) => h.playerId)}::text[],
+        ${history.map((h) => h.matchId)}::text[],
+        ${history.map((h) => h.playedAt.toISOString())}::timestamptz[],
+        ${history.map((h) => h.seq)}::int[],
+        ${history.map((h) => h.mu)}::double precision[],
+        ${history.map((h) => h.sigma)}::double precision[],
+        ${history.map((h) => h.delta)}::int[],
+        ${history.map((h) => h.outcome)}::text[]
+      ) as t(player_id, match_id, played_at, seq, mu, sigma, delta, outcome)
+      on conflict (match_id, player_id) do nothing
+    `,
+  ]);
 }
 
 export async function setMatchVoided(matchId: string, voided: boolean): Promise<string> {
@@ -581,4 +726,65 @@ async function uniqueSlug(table: "games" | "players", base: string): Promise<str
     if (!taken.has(candidate)) return candidate;
   }
   return `${base}-${Date.now()}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tickets                                                                     */
+/* -------------------------------------------------------------------------- */
+
+function toTicket(row: Row): Ticket {
+  return {
+    id: row.id as string,
+    title: row.title as string,
+    body: (row.body as string | null) ?? null,
+    reporter: (row.reporter as string | null) ?? null,
+    kind: row.kind as TicketKind,
+    status: row.status as TicketStatus,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+export async function listTickets(): Promise<Ticket[]> {
+  const rows = await q`
+    select * from tickets
+    order by
+      -- Untriaged first, settled last; newest within each group.
+      case status
+        when 'open' then 0
+        when 'planned' then 1
+        when 'done' then 2
+        else 3
+      end,
+      created_at desc
+  `;
+  return rows.map(toTicket);
+}
+
+export async function createTicket(input: {
+  title: string;
+  body?: string | null;
+  reporter?: string | null;
+  kind: TicketKind;
+}): Promise<Ticket> {
+  const rows = await q`
+    insert into tickets (title, body, reporter, kind)
+    values (${input.title}, ${input.body ?? null}, ${input.reporter ?? null},
+            ${input.kind})
+    returning *
+  `;
+  return toTicket(rows[0]);
+}
+
+export async function setTicketStatus(
+  id: string,
+  status: TicketStatus,
+): Promise<void> {
+  await q`
+    update tickets set status = ${status}, updated_at = now() where id = ${id}
+  `;
+}
+
+export async function deleteTicket(id: string): Promise<void> {
+  await q`delete from tickets where id = ${id}`;
 }

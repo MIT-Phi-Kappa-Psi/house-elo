@@ -6,9 +6,11 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
     "migrate": "tsx scripts/migrate.mts",
-    "seed": "tsx scripts/seed.mts"
+    "seed": "tsx scripts/seed.mts",
+    "tickets": "tsx scripts/tickets.mts",
+    "db:size": "tsx scripts/db-size.mts"
   },
   "keywords": [],
   "author": "",

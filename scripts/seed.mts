@@ -37,12 +37,14 @@ for (let i = 0; i < 60; i++) {
   while (b.id === a.id) b = pick(players);
   const aWins = Math.random() < 0.5 + (strength.get(a.id)! - strength.get(b.id)!) / 2;
   when += 1000 * 60 * 90;
+  // Losing badly earns a lap; roughly a fifth of defeats here.
+  const lapLoser = Math.random() < 0.2;
   await createMatch({
     gameId: pool.id,
     playedAt: new Date(when),
     teams: [
-      { rank: aWins ? 1 : 2, playerIds: [a.id] },
-      { rank: aWins ? 2 : 1, playerIds: [b.id] },
+      { rank: aWins ? 1 : 2, playerIds: [a.id], nakedLap: lapLoser && !aWins },
+      { rank: aWins ? 2 : 1, playerIds: [b.id], nakedLap: lapLoser && aWins },
     ],
   });
 }

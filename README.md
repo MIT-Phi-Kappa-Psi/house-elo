@@ -52,11 +52,11 @@ Players are global and created on the fly: type a name into a match and they
 exist from then on. The **Players** page lists everyone, with how many matches
 and games they've appeared in, and grows on its own.
 
-Because names are free text, the roster field suggests existing players as you
-type. The suggestions track the name under the cursor rather than the whole
-field, so they keep working for the second and third player on a team — a
-plain `<datalist>` cannot do this, since the browser matches its options
-against the input's entire value.
+Rosters are built from chips. Typing narrows a dropdown of existing players;
+picking one adds a chip. A name matching nobody can still be added — it appears
+as a chip marked **new** and the player is created on submit — but that is a
+separate, deliberate row in the dropdown rather than something a typo does
+silently.
 
 When the same person does end up under two names, **Merge duplicates** on the
 Players page folds one into the other: every match is reassigned, the duplicate
@@ -66,6 +66,50 @@ identical to having used one name all along.
 A merge is refused when both players appear in the same match — that would put
 one person on both sides of a result, or silently shrink a team. The error names
 the conflicting matches so you can void or fix them first.
+
+## Naked laps
+
+Each team on a match can be marked as owing a naked lap. It shows as a badge on
+the match wherever that match appears, and the Players page is ranked by laps
+owed — most first. Voiding a match withdraws its laps; merging two players sums
+theirs.
+
+## Tickets
+
+`/tickets` is the bug and request queue. Anyone can file one; everything filed
+is visible to everyone. Triage is a status on each ticket — `open`, `planned`,
+`done`, `declined` — so filing something is not the same as agreeing to build
+it.
+
+The same queue is readable from a terminal, which is how to hand it to a coding
+agent without screenshots:
+
+```bash
+npm run tickets            # all, untriaged first
+npm run tickets -- open    # just the open ones
+npm run tickets -- --json  # machine-readable
+```
+
+## Storage
+
+The database is on Neon's free tier: **512 MB**, shared by data and history
+retention. Check where you stand at any time:
+
+```bash
+npm run db:size
+```
+
+A match costs roughly 5–7 KB across all tables, so the budget is on the order of
+**75,000–95,000 matches**. At twenty matches a day that is over a decade.
+
+The thing that actually threatened this was not row count but write
+amplification. Ratings are derived from the match log, and the first
+implementation rebuilt a game's entire projection on every single insert:
+O(matches²) row writes over a game's life, leaving the derived tables ~86% dead
+tuples. Appending a match now writes only the rows for the players in it, and
+the full replay runs only when it has to — a back-dated match, a void, a merge,
+or the Recompute button. If `npm run db:size` ever reports a large dead-row
+count, something has regressed to rewriting more than it needs to.
 
 ## What it deliberately doesn't do
 
@@ -153,8 +197,11 @@ They truncate every table between tests — point them at a throwaway database.
 | `lib/schema.sql` | Tables. Source-of-truth and derived, marked as such. |
 | `lib/db.ts` | Driver selection (Neon HTTP / node-postgres). |
 | `app/actions.ts` | Server actions and all input validation. |
-| `lib/tokens.ts` | Caret-aware editing for the comma-separated roster field. |
+| `lib/chips.ts` | Selection rules for the player chip picker. |
 | `app/players/` | Player directory, rename, and merge. |
+| `app/tickets/` | Bug and request queue. |
+| `scripts/tickets.mts` | Read the ticket queue from a terminal. |
+| `scripts/db-size.mts` | Storage use against the free-tier budget. |
 | `test/` | Engine tests, schema tests, DB integration tests. |
 
 ## Things you may want to change
