@@ -61,7 +61,8 @@ async function pool() {
     name: "Pool",
     minTeamSize: 1,
     maxTeamSize: 1,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
 }
@@ -114,7 +115,8 @@ test("team matches round-trip with every player on the right side", opts, async 
     name: "Soccer",
     minTeamSize: 2,
     maxTeamSize: 3,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: true,
   });
   const ids = [];
@@ -233,7 +235,8 @@ test("ratings are independent per game", opts, async () => {
     name: "Darts",
     minTeamSize: 1,
     maxTeamSize: 1,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
   const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
@@ -253,7 +256,8 @@ test("teammate concentration counts shared sides only", opts, async () => {
     name: "Doubles",
     minTeamSize: 2,
     maxTeamSize: 2,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
   const ids: Record<string, string> = {};
@@ -324,7 +328,8 @@ test("a draw is stored and reflected in the record", opts, async () => {
     name: "Chess",
     minTeamSize: 1,
     maxTeamSize: 1,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: true,
   });
   const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
@@ -349,7 +354,8 @@ test("appending matches incrementally matches a full replay exactly", opts, asyn
     name: "Incremental",
     minTeamSize: 1,
     maxTeamSize: 2,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: true,
   });
   const ids: string[] = [];
@@ -467,6 +473,35 @@ test("appending writes only the rows for players in that match", opts, async () 
   assert.equal((await getLeaderboard(game.id)).length, 4);
 });
 
+test("a match with fewer teams than the game's minimum is rejected", opts, async () => {
+  const game = await createGame({
+    name: "Three way",
+    minTeamSize: 1,
+    maxTeamSize: 1,
+    minTeamsPerMatch: 3,
+    maxTeamsPerMatch: 4,
+    allowsDraws: false,
+  });
+  assert.equal(game.minTeamsPerMatch, 3);
+  assert.equal(game.maxTeamsPerMatch, 4);
+});
+
+test("a game created before the range existed reads min and max as equal", opts, async () => {
+  const game = await createGame({
+    name: "Legacy",
+    minTeamSize: 1,
+    maxTeamSize: 1,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
+    allowsDraws: false,
+  });
+  // Simulate a row written before max_teams_per_match existed.
+  await sql()`update games set max_teams_per_match = null where id = ${game.id}`;
+  const reloaded = (await getGame("legacy"))!;
+  assert.equal(reloaded.minTeamsPerMatch, 2);
+  assert.equal(reloaded.maxTeamsPerMatch, 2, "null max falls back to the minimum");
+});
+
 test("a naked lap is stored on the team and read back with the match", opts, async () => {
   const game = await pool();
   const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
@@ -521,7 +556,8 @@ test("every member of a team shares its naked lap", opts, async () => {
     name: "Doubles",
     minTeamSize: 2,
     maxTeamSize: 2,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
   const ids: Record<string, string> = {};
@@ -655,7 +691,8 @@ test("a merge produces the same ratings as if one name had been used all along",
     name: "Messy",
     minTeamSize: 1,
     maxTeamSize: 1,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
 
@@ -721,7 +758,8 @@ test("merging two players who shared a team is refused", opts, async () => {
     name: "Doubles",
     minTeamSize: 2,
     maxTeamSize: 2,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
   const ids: Record<string, string> = {};
@@ -765,7 +803,8 @@ test("a merge spanning several games recomputes each of them", opts, async () =>
     name: "Darts",
     minTeamSize: 1,
     maxTeamSize: 1,
-    teamsPerMatch: 2,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
     allowsDraws: false,
   });
   const [dup, keep, foe] = [

@@ -32,7 +32,8 @@ export async function createGameAction(
 
   const minTeamSize = Number(formData.get("minTeamSize") ?? 1);
   const maxTeamSize = Number(formData.get("maxTeamSize") ?? minTeamSize);
-  const teamsPerMatch = Number(formData.get("teamsPerMatch") ?? 2);
+  const minTeamsPerMatch = Number(formData.get("minTeamsPerMatch") ?? 2);
+  const maxTeamsPerMatch = Number(formData.get("maxTeamsPerMatch") ?? minTeamsPerMatch);
   const allowsDraws = formData.get("allowsDraws") === "on";
 
   if (!Number.isInteger(minTeamSize) || minTeamSize < 1) {
@@ -41,15 +42,19 @@ export async function createGameAction(
   if (!Number.isInteger(maxTeamSize) || maxTeamSize < minTeamSize) {
     return { error: "Maximum team size must be at least the minimum." };
   }
-  if (!Number.isInteger(teamsPerMatch) || teamsPerMatch < 2) {
+  if (!Number.isInteger(minTeamsPerMatch) || minTeamsPerMatch < 2) {
     return { error: "A match needs at least 2 teams." };
+  }
+  if (!Number.isInteger(maxTeamsPerMatch) || maxTeamsPerMatch < minTeamsPerMatch) {
+    return { error: "Maximum teams must be at least the minimum." };
   }
 
   const game = await createGame({
     name,
     minTeamSize,
     maxTeamSize,
-    teamsPerMatch,
+    minTeamsPerMatch,
+    maxTeamsPerMatch,
     allowsDraws,
   });
   revalidatePath("/");
@@ -64,7 +69,7 @@ export async function createMatchAction(
   const game = await getGame(gameSlug);
   if (!game) return { error: "Game not found." };
 
-  const teamCount = Number(formData.get("teamCount") ?? game.teamsPerMatch);
+  const teamCount = Number(formData.get("teamCount") ?? game.minTeamsPerMatch);
   const teams: {
     rank: number;
     playerIds: string[];
@@ -105,7 +110,18 @@ export async function createMatchAction(
     });
   }
 
-  if (teams.length < 2) return { error: "Record at least two teams." };
+  if (teams.length < game.minTeamsPerMatch) {
+    return {
+      error:
+        `${game.name} needs at least ${game.minTeamsPerMatch} teams; ` +
+        `${teams.length} had players.`,
+    };
+  }
+  if (teams.length > game.maxTeamsPerMatch) {
+    return {
+      error: `${game.name} allows at most ${game.maxTeamsPerMatch} teams.`,
+    };
+  }
 
   const seen = new Set<string>();
   for (const team of teams) {

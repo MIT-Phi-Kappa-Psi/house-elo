@@ -25,7 +25,7 @@ export default function MatchForm({
 }) {
   // Controlled, so a rejected submission does not wipe what was entered.
   const [teams, setTeams] = useState<TeamDraft[]>(() =>
-    Array.from({ length: game.teamsPerMatch }, (_, i) => blankTeam(i)),
+    Array.from({ length: game.minTeamsPerMatch }, (_, i) => blankTeam(i)),
   );
   const [state, action, pending] = useActionState<ActionState, FormData>(
     createMatchAction,
@@ -116,24 +116,31 @@ export default function MatchForm({
         ))}
       </div>
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => setTeams((c) => [...c, blankTeam(c.length)])}
-        >
-          + Add team
-        </button>
-        {teams.length > 2 && (
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => setTeams((c) => c.slice(0, -1))}
-          >
-            − Remove team
-          </button>
-        )}
-      </div>
+      {game.maxTeamsPerMatch > game.minTeamsPerMatch && (
+        <div className="flex flex-wrap items-center gap-2">
+          {teams.length < game.maxTeamsPerMatch && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setTeams((c) => [...c, blankTeam(c.length)])}
+            >
+              + Add team
+            </button>
+          )}
+          {teams.length > game.minTeamsPerMatch && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setTeams((c) => c.slice(0, -1))}
+            >
+              − Remove team
+            </button>
+          )}
+          <span className="text-xs text-[var(--color-muted)]">
+            {teams.length} of {game.minTeamsPerMatch}–{game.maxTeamsPerMatch} teams
+          </span>
+        </div>
+      )}
 
       <p className="text-xs text-[var(--color-muted)]">
         {game.allowsDraws

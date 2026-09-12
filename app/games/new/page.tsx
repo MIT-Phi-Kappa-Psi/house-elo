@@ -4,11 +4,11 @@ import { useActionState, useState } from "react";
 import { createGameAction, type ActionState } from "@/app/actions";
 
 const PRESETS = [
-  { label: "1v1", min: 1, max: 1, teams: 2 },
-  { label: "2v2", min: 2, max: 2, teams: 2 },
-  { label: "3v3", min: 3, max: 3, teams: 2 },
-  { label: "5v5", min: 5, max: 5, teams: 2 },
-  { label: "Free-for-all", min: 1, max: 1, teams: 4 },
+  { label: "1v1", min: 1, max: 1, minTeams: 2, maxTeams: 2 },
+  { label: "2v2", min: 2, max: 2, minTeams: 2, maxTeams: 2 },
+  { label: "3v3", min: 3, max: 3, minTeams: 2, maxTeams: 2 },
+  { label: "5v5", min: 5, max: 5, minTeams: 2, maxTeams: 2 },
+  { label: "Free-for-all", min: 1, max: 1, minTeams: 2, maxTeams: 8 },
 ];
 
 export default function NewGamePage() {
@@ -17,7 +17,8 @@ export default function NewGamePage() {
   const [name, setName] = useState("");
   const [minTeamSize, setMinTeamSize] = useState("1");
   const [maxTeamSize, setMaxTeamSize] = useState("1");
-  const [teamsPerMatch, setTeamsPerMatch] = useState("2");
+  const [minTeamsPerMatch, setMinTeamsPerMatch] = useState("2");
+  const [maxTeamsPerMatch, setMaxTeamsPerMatch] = useState("2");
   const [allowsDraws, setAllowsDraws] = useState(false);
 
   const [state, action, pending] = useActionState<ActionState, FormData>(
@@ -61,7 +62,8 @@ export default function NewGamePage() {
                 onClick={() => {
                   setMinTeamSize(String(preset.min));
                   setMaxTeamSize(String(preset.max));
-                  setTeamsPerMatch(String(preset.teams));
+                  setMinTeamsPerMatch(String(preset.minTeams));
+                  setMaxTeamsPerMatch(String(preset.maxTeams));
                 }}
               >
                 {preset.label}
@@ -69,7 +71,7 @@ export default function NewGamePage() {
             ))}
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <label className="text-xs text-[var(--color-muted)]">
               Min per team
               <input
@@ -93,20 +95,32 @@ export default function NewGamePage() {
               />
             </label>
             <label className="text-xs text-[var(--color-muted)]">
-              Teams per match
+              Min teams
               <input
-                name="teamsPerMatch"
+                name="minTeamsPerMatch"
                 type="number"
                 min={2}
                 className="field mt-1"
-                value={teamsPerMatch}
-                onChange={(e) => setTeamsPerMatch(e.target.value)}
+                value={minTeamsPerMatch}
+                onChange={(e) => setMinTeamsPerMatch(e.target.value)}
+              />
+            </label>
+            <label className="text-xs text-[var(--color-muted)]">
+              Max teams
+              <input
+                name="maxTeamsPerMatch"
+                type="number"
+                min={2}
+                className="field mt-1"
+                value={maxTeamsPerMatch}
+                onChange={(e) => setMaxTeamsPerMatch(e.target.value)}
               />
             </label>
           </div>
           <p className="mt-2 text-xs text-[var(--color-muted)]">
-            A min below the max lets you still record a 3v2 when someone drops out.
-            More than two teams gives you free-for-alls.
+            Each is a range, so you can still record a 3v2 when someone drops out,
+            or a three-way match in a game that is usually head-to-head. Set min and
+            max equal to pin the format exactly.
           </p>
         </fieldset>
 

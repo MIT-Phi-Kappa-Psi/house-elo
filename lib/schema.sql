@@ -50,6 +50,13 @@ create table if not exists match_teams (
   constraint rank_positive check (rank >= 1)
 );
 
+-- Number of teams in a match is a range, like team size. `teams_per_match` is
+-- the MINIMUM (it predates the range and already holds that value); the new
+-- column is the maximum, backfilled to match so existing games keep their
+-- exact current behaviour.
+alter table games add column if not exists max_teams_per_match int;
+update games set max_teams_per_match = teams_per_match where max_teams_per_match is null;
+
 -- House forfeit: the team that has to run a lap. Added after the initial
 -- schema, so it is applied as an idempotent alter rather than inside the
 -- create above, which would be skipped on an existing database.

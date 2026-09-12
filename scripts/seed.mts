@@ -9,7 +9,8 @@ const pool = await createGame({
   name: "Pool",
   minTeamSize: 1,
   maxTeamSize: 1,
-  teamsPerMatch: 2,
+  minTeamsPerMatch: 2,
+  maxTeamsPerMatch: 2,
   allowsDraws: false,
 });
 
@@ -17,7 +18,8 @@ const soccer = await createGame({
   name: "Five-a-side",
   minTeamSize: 4,
   maxTeamSize: 5,
-  teamsPerMatch: 2,
+  minTeamsPerMatch: 2,
+  maxTeamsPerMatch: 2,
   allowsDraws: true,
 });
 

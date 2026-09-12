@@ -26,7 +26,8 @@ export type Game = {
   name: string;
   minTeamSize: number;
   maxTeamSize: number;
-  teamsPerMatch: number;
+  minTeamsPerMatch: number;
+  maxTeamsPerMatch: number;
   allowsDraws: boolean;
 };
 
@@ -91,7 +92,8 @@ function toGame(row: Row): Game {
     name: row.name as string,
     minTeamSize: Number(row.min_team_size),
     maxTeamSize: Number(row.max_team_size),
-    teamsPerMatch: Number(row.teams_per_match),
+    minTeamsPerMatch: Number(row.teams_per_match),
+    maxTeamsPerMatch: Number(row.max_teams_per_match ?? row.teams_per_match),
     allowsDraws: Boolean(row.allows_draws),
   };
 }
@@ -409,14 +411,17 @@ export async function createGame(input: {
   name: string;
   minTeamSize: number;
   maxTeamSize: number;
-  teamsPerMatch: number;
+  minTeamsPerMatch: number;
+  maxTeamsPerMatch: number;
   allowsDraws: boolean;
 }): Promise<Game> {
   const slug = await uniqueSlug("games", slugify(input.name));
   const rows = await q`
-    insert into games (slug, name, min_team_size, max_team_size, teams_per_match, allows_draws)
+    insert into games
+      (slug, name, min_team_size, max_team_size, teams_per_match,
+       max_teams_per_match, allows_draws)
     values (${slug}, ${input.name}, ${input.minTeamSize}, ${input.maxTeamSize},
-            ${input.teamsPerMatch}, ${input.allowsDraws})
+            ${input.minTeamsPerMatch}, ${input.maxTeamsPerMatch}, ${input.allowsDraws})
     returning *
   `;
   return toGame(rows[0]);

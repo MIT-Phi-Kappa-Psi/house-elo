@@ -87,8 +87,9 @@ export default function PlayerChipsInput({
               <button
                 type="button"
                 aria-label={`Remove ${player}`}
-                className="rounded-full px-1 leading-none opacity-60 hover:opacity-100"
-                onClick={(e) => {
+                className="rounded-full px-2 text-base leading-none opacity-60 hover:opacity-100"
+                onPointerDown={(e) => {
+                  e.preventDefault();
                   e.stopPropagation();
                   removeAt(index);
                 }}
@@ -156,9 +157,15 @@ export default function PlayerChipsInput({
                     ? "bg-[var(--color-accent)] text-[#06281c]"
                     : "hover:bg-[#1b2128]"
                 }`}
-                onMouseDown={(e) => e.preventDefault()}
+                // Commit on pointer-down, not click: on a touch screen the
+                // keyboard dismissing blurs the input and tears this list down
+                // before a click would ever land. preventDefault also keeps
+                // focus in the field. Covers mouse, touch and pen alike.
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  commit(match);
+                }}
                 onMouseEnter={() => setHighlight(index)}
-                onClick={() => commit(match)}
               >
                 {match}
               </button>
@@ -173,9 +180,11 @@ export default function PlayerChipsInput({
                     ? "bg-[var(--color-warn)] text-[#2a1f00]"
                     : "hover:bg-[#1b2128]"
                 }`}
-                onMouseDown={(e) => e.preventDefault()}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  commit(query);
+                }}
                 onMouseEnter={() => setHighlight(matches.length)}
-                onClick={() => commit(query)}
               >
                 Add “{normalizeName(query)}” as a new player
               </button>
