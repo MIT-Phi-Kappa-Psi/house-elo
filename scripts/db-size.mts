@@ -37,12 +37,31 @@ for (const t of tables) {
 const pct = ((total / LIMIT_BYTES) * 100).toFixed(2);
 console.log(`\n${mb(total)} of 512.0 MB used (${pct}%)`);
 
-if (Number(matches) > 0) {
+/**
+ * Postgres allocates whole 8 KB pages per table and index, so a nearly empty
+ * database is almost entirely fixed overhead. Dividing total size by a handful
+ * of matches yields a per-match cost that is wildly too high; only extrapolate
+ * once there is enough data for the marginal cost to dominate.
+ */
+const MEANINGFUL_SAMPLE = 50;
+const MEASURED_KB_PER_MATCH = 7; // from a 80-match sample, mixed 1v1 and 4v4
+
+if (Number(matches) >= MEANINGFUL_SAMPLE) {
   const perMatch = total / Number(matches);
   const headroom = Math.floor((LIMIT_BYTES - total) / perMatch);
   console.log(
     `${matches} matches · ~${(perMatch / 1024).toFixed(1)} KB each · ` +
       `room for roughly ${headroom.toLocaleString()} more`,
+  );
+} else {
+  const headroom = Math.floor((LIMIT_BYTES - total) / (MEASURED_KB_PER_MATCH * 1024));
+  console.log(
+    `${matches} matches — too few to measure a per-match cost (a near-empty ` +
+      `database is mostly fixed page overhead).`,
+  );
+  console.log(
+    `At the measured ~${MEASURED_KB_PER_MATCH} KB per match, that is room for ` +
+      `roughly ${headroom.toLocaleString()}.`,
   );
 }
 
