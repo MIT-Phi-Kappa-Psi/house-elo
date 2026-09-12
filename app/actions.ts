@@ -1,0 +1,162 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import {
+  createGame,
+  createMatch,
+  findOrCreatePlayer,
+  getGame,
+  recomputeGame,
+  setMatchVoided,
+} from "@/lib/queries";
+import { AUTH_COOKIE, expectedToken, tokenFor } from "@/lib/auth";
+import { parseNames } from "@/lib/format";
+
+export type ActionState = { error?: string } | null;
+
+export async function createGameAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return { error: "Give the game a name." };
+
+  const minTeamSize = Number(formData.get("minTeamSize") ?? 1);
+  const maxTeamSize = Number(formData.get("maxTeamSize") ?? minTeamSize);
+  const teamsPerMatch = Number(formData.get("teamsPerMatch") ?? 2);
+  const allowsDraws = formData.get("allowsDraws") === "on";
+
+  if (!Number.isInteger(minTeamSize) || minTeamSize < 1) {
+    return { error: "Minimum team size must be at least 1." };
+  }
+  if (!Number.isInteger(maxTeamSize) || maxTeamSize < minTeamSize) {
+    return { error: "Maximum team size must be at least the minimum." };
+  }
+  if (!Number.isInteger(teamsPerMatch) || teamsPerMatch < 2) {
+    return { error: "A match needs at least 2 teams." };
+  }
+
+  const game = await createGame({
+    name,
+    minTeamSize,
+    maxTeamSize,
+    teamsPerMatch,
+    allowsDraws,
+  });
+  revalidatePath("/");
+  redirect(`/games/${game.slug}`);
+}
+
+export async function createMatchAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const gameSlug = String(formData.get("gameSlug") ?? "");
+  const game = await getGame(gameSlug);
+  if (!game) return { error: "Game not found." };
+
+  const teamCount = Number(formData.get("teamCount") ?? game.teamsPerMatch);
+  const teams: { rank: number; playerIds: string[]; score: number | null }[] = [];
+
+  for (let i = 0; i < teamCount; i++) {
+    const names = parseNames(String(formData.get(`team-${i}-players`) ?? ""));
+    const rank = Number(formData.get(`team-${i}-rank`) ?? i + 1);
+    const rawScore = String(formData.get(`team-${i}-score`) ?? "").trim();
+
+    if (names.length === 0) continue;
+    if (!Number.isInteger(rank) || rank < 1) {
+      return { error: `Team ${i + 1} needs a placement of 1 or higher.` };
+    }
+    if (names.length < game.minTeamSize || names.length > game.maxTeamSize) {
+      return {
+        error:
+          `Team ${i + 1} has ${names.length} player(s); ${game.name} expects ` +
+          `${game.minTeamSize === game.maxTeamSize ? game.minTeamSize : `${game.minTeamSize}-${game.maxTeamSize}`}.`,
+      };
+    }
+
+    const players = [];
+    for (const name of names) players.push(await findOrCreatePlayer(name));
+
+    const ids = players.map((p) => p.id);
+    if (new Set(ids).size !== ids.length) {
+      return { error: `Team ${i + 1} lists the same player twice.` };
+    }
+
+    teams.push({
+      rank,
+      playerIds: ids,
+      score: rawScore === "" ? null : Number(rawScore),
+    });
+  }
+
+  if (teams.length < 2) return { error: "Record at least two teams." };
+
+  const seen = new Set<string>();
+  for (const team of teams) {
+    for (const id of team.playerIds) {
+      if (seen.has(id)) return { error: "A player appears on more than one team." };
+      seen.add(id);
+    }
+  }
+
+  // Identical placements across every team is a legitimate full draw, so the
+  // only rule here is that a game without draws needs distinct placements.
+  const ranks = teams.map((t) => t.rank);
+  if (!game.allowsDraws && new Set(ranks).size !== ranks.length) {
+    return { error: `${game.name} does not allow draws — give each team a distinct placement.` };
+  }
+
+  const playedAtRaw = String(formData.get("playedAt") ?? "").trim();
+  const playedAt = playedAtRaw ? new Date(playedAtRaw) : new Date();
+  if (Number.isNaN(playedAt.getTime())) return { error: "That date could not be read." };
+
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  await createMatch({ gameId: game.id, playedAt, note, teams });
+  revalidatePath(`/games/${game.slug}`);
+  redirect(`/games/${game.slug}`);
+}
+
+export async function voidMatchAction(formData: FormData): Promise<void> {
+  const matchId = String(formData.get("matchId") ?? "");
+  const voided = formData.get("voided") === "true";
+  const gameSlug = String(formData.get("gameSlug") ?? "");
+  await setMatchVoided(matchId, voided);
+  revalidatePath(`/games/${gameSlug}`);
+}
+
+export async function recomputeAction(formData: FormData): Promise<void> {
+  const gameSlug = String(formData.get("gameSlug") ?? "");
+  const game = await getGame(gameSlug);
+  if (!game) return;
+  await recomputeGame(game.id);
+  revalidatePath(`/games/${gameSlug}`);
+}
+
+export async function loginAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const expected = await expectedToken();
+  if (!expected) redirect("/");
+
+  const password = String(formData.get("password") ?? "");
+  if ((await tokenFor(password)) !== expected) {
+    return { error: "That password is not right." };
+  }
+
+  const store = await cookies();
+  store.set(AUTH_COOKIE, expected, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 60 * 60 * 24 * 365,
+    path: "/",
+  });
+
+  const next = String(formData.get("next") ?? "/");
+  redirect(next.startsWith("/") ? next : "/");
+}
