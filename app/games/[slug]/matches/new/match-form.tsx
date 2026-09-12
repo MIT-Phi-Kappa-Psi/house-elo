@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { createMatchAction, type ActionState } from "@/app/actions";
 import type { Game } from "@/lib/queries";
 import { parseNames } from "@/lib/format";
+import PlayerNamesInput from "@/app/components/player-names-input";
 
 type TeamDraft = { players: string; rank: string; score: string };
 
@@ -44,12 +45,6 @@ export default function MatchForm({
       <input type="hidden" name="gameSlug" value={game.slug} />
       <input type="hidden" name="teamCount" value={teams.length} />
 
-      <datalist id="known-players">
-        {knownPlayers.map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
-
       <div className="space-y-3">
         {teams.map((team, index) => (
           <div key={index} className="panel space-y-3 px-4 py-4">
@@ -60,14 +55,12 @@ export default function MatchForm({
 
             <label className="block text-xs text-[var(--color-muted)]">
               Players (comma separated — new names are created automatically)
-              <input
+              <PlayerNamesInput
                 name={`team-${index}-players`}
-                list="known-players"
-                className="field mt-1"
                 placeholder="Jackson, Sam"
-                autoComplete="off"
+                known={knownPlayers}
                 value={team.players}
-                onChange={(e) => update(index, { players: e.target.value })}
+                onChange={(players) => update(index, { players })}
               />
             </label>
 

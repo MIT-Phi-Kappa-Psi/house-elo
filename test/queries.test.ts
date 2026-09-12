@@ -19,7 +19,12 @@ import {
   listGames,
   listMatches,
   listPlayerMatches,
+  listPlayerDirectory,
   listPlayers,
+  findMergeConflicts,
+  findPlayerByName,
+  mergePlayers,
+  renamePlayer,
   previewOdds,
   recomputeGame,
   setMatchVoided,
@@ -337,4 +342,237 @@ test("a draw is stored and reflected in the record", opts, async () => {
     assert.equal(row.wins, 0);
     assert.equal(row.displayRating, board[0].displayRating);
   }
+});
+
+test("the player directory lists everyone with their activity", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  await findOrCreatePlayer("NeverPlayed");
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 0, 5),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+
+  const directory = await listPlayerDirectory();
+  assert.equal(directory.length, 3);
+
+  const played = directory.find((p) => p.name === "A")!;
+  assert.equal(played.matchesPlayed, 1);
+  assert.equal(played.gamesPlayed, 1);
+  assert.ok(played.lastPlayed);
+
+  const idle = directory.find((p) => p.name === "NeverPlayed")!;
+  assert.equal(idle.matchesPlayed, 0);
+  assert.equal(idle.lastPlayed, null);
+});
+
+test("merging moves matches and deletes the duplicate", opts, async () => {
+  const game = await pool();
+  const [jackson, typo, sam] = [
+    await findOrCreatePlayer("Jackson"),
+    await findOrCreatePlayer("Jakcson"),
+    await findOrCreatePlayer("Sam"),
+  ];
+
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 0, 1),
+    teams: [
+      { rank: 1, playerIds: [jackson.id] },
+      { rank: 2, playerIds: [sam.id] },
+    ],
+  });
+  await createMatch({
+    gameId: game.id,
+    playedAt: new Date(2026, 0, 2),
+    teams: [
+      { rank: 1, playerIds: [typo.id] },
+      { rank: 2, playerIds: [sam.id] },
+    ],
+  });
+
+  assert.equal((await getLeaderboard(game.id)).length, 3);
+
+  const result = await mergePlayers(typo.id, jackson.id);
+  assert.equal(result.matchesMoved, 1);
+  assert.equal(result.gamesRecomputed, 1);
+
+  assert.equal(await findPlayerByName("Jakcson"), null);
+  const board = await getLeaderboard(game.id);
+  assert.equal(board.length, 2);
+  const merged = board.find((r) => r.name === "Jackson")!;
+  assert.equal(merged.wins, 2, "both wins now belong to one player");
+  assert.equal(merged.matchesPlayed, 2);
+});
+
+test("a merge produces the same ratings as if one name had been used all along", opts, async () => {
+  const clean = await pool();
+  const messy = await createGame({
+    name: "Messy",
+    minTeamSize: 1,
+    maxTeamSize: 1,
+    teamsPerMatch: 2,
+    allowsDraws: false,
+  });
+
+  const [one, other] = [await findOrCreatePlayer("One"), await findOrCreatePlayer("Other")];
+  const [right, typo, otherB] = [
+    await findOrCreatePlayer("Right"),
+    await findOrCreatePlayer("Rihgt"),
+    await findOrCreatePlayer("OtherB"),
+  ];
+
+  for (let i = 0; i < 6; i++) {
+    const day = new Date(2026, 0, i + 1);
+    await createMatch({
+      gameId: clean.id,
+      playedAt: day,
+      teams: [
+        { rank: 1, playerIds: [one.id] },
+        { rank: 2, playerIds: [other.id] },
+      ],
+    });
+    // Same results, but the winner's name alternates between two spellings.
+    await createMatch({
+      gameId: messy.id,
+      playedAt: day,
+      teams: [
+        { rank: 1, playerIds: [i % 2 === 0 ? right.id : typo.id] },
+        { rank: 2, playerIds: [otherB.id] },
+      ],
+    });
+  }
+
+  await mergePlayers(typo.id, right.id);
+
+  const expected = (await getLeaderboard(clean.id)).find((r) => r.name === "One")!;
+  const actual = (await getLeaderboard(messy.id)).find((r) => r.name === "Right")!;
+  assert.equal(actual.displayRating, expected.displayRating);
+  assert.equal(actual.matchesPlayed, expected.matchesPlayed);
+});
+
+test("merging two players who faced each other is refused", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+
+  const conflicts = await findMergeConflicts(a.id, b.id);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].sameTeam, false);
+
+  await assert.rejects(() => mergePlayers(a.id, b.id), /same match/i);
+  // Nothing was changed by the refusal.
+  assert.equal((await getLeaderboard(game.id)).length, 2);
+  assert.ok(await findPlayerByName("A"));
+});
+
+test("merging two players who shared a team is refused", opts, async () => {
+  const game = await createGame({
+    name: "Doubles",
+    minTeamSize: 2,
+    maxTeamSize: 2,
+    teamsPerMatch: 2,
+    allowsDraws: false,
+  });
+  const ids: Record<string, string> = {};
+  for (const n of ["A", "B", "C", "D"]) ids[n] = (await findOrCreatePlayer(n)).id;
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [ids.A, ids.B] },
+      { rank: 2, playerIds: [ids.C, ids.D] },
+    ],
+  });
+
+  const conflicts = await findMergeConflicts(ids.A, ids.B);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].sameTeam, true);
+  await assert.rejects(() => mergePlayers(ids.A, ids.B), /same match/i);
+});
+
+test("merging a player with no matches just removes them", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  const ghost = await findOrCreatePlayer("Ghost");
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  const before = await getLeaderboard(game.id);
+
+  const result = await mergePlayers(ghost.id, a.id);
+  assert.equal(result.matchesMoved, 0);
+  assert.equal(await findPlayerByName("Ghost"), null);
+  assert.deepEqual(await getLeaderboard(game.id), before);
+});
+
+test("a merge spanning several games recomputes each of them", opts, async () => {
+  const g1 = await pool();
+  const g2 = await createGame({
+    name: "Darts",
+    minTeamSize: 1,
+    maxTeamSize: 1,
+    teamsPerMatch: 2,
+    allowsDraws: false,
+  });
+  const [dup, keep, foe] = [
+    await findOrCreatePlayer("Dup"),
+    await findOrCreatePlayer("Keep"),
+    await findOrCreatePlayer("Foe"),
+  ];
+  await createMatch({
+    gameId: g1.id,
+    teams: [
+      { rank: 1, playerIds: [dup.id] },
+      { rank: 2, playerIds: [foe.id] },
+    ],
+  });
+  await createMatch({
+    gameId: g2.id,
+    teams: [
+      { rank: 1, playerIds: [keep.id] },
+      { rank: 2, playerIds: [foe.id] },
+    ],
+  });
+
+  const result = await mergePlayers(dup.id, keep.id);
+  assert.equal(result.gamesRecomputed, 2);
+  assert.ok((await getLeaderboard(g1.id)).some((r) => r.name === "Keep"));
+  assert.ok((await getLeaderboard(g2.id)).some((r) => r.name === "Keep"));
+});
+
+test("merging a player into itself is refused", opts, async () => {
+  const a = await findOrCreatePlayer("A");
+  await assert.rejects(() => mergePlayers(a.id, a.id), /into itself/i);
+});
+
+test("renaming a player keeps their matches and rating", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("Jakcson"), await findOrCreatePlayer("Sam")];
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  const before = (await getLeaderboard(game.id))[0].displayRating;
+
+  await renamePlayer(a.id, "Jackson");
+  const board = await getLeaderboard(game.id);
+  assert.equal(board[0].name, "Jackson");
+  assert.equal(board[0].displayRating, before);
 });

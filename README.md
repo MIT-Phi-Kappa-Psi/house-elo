@@ -46,6 +46,27 @@ log, or changing the rating algorithm outright safe after the fact. At house
 league scale a full replay takes milliseconds. The "Recompute" button on each
 game page does it on demand.
 
+## Players
+
+Players are global and created on the fly: type a name into a match and they
+exist from then on. The **Players** page lists everyone, with how many matches
+and games they've appeared in, and grows on its own.
+
+Because names are free text, the roster field suggests existing players as you
+type. The suggestions track the name under the cursor rather than the whole
+field, so they keep working for the second and third player on a team — a
+plain `<datalist>` cannot do this, since the browser matches its options
+against the input's entire value.
+
+When the same person does end up under two names, **Merge duplicates** on the
+Players page folds one into the other: every match is reassigned, the duplicate
+is deleted, and each affected game is replayed from its log. The result is
+identical to having used one name all along.
+
+A merge is refused when both players appear in the same match — that would put
+one person on both sides of a result, or silently shrink a team. The error names
+the conflicting matches so you can void or fix them first.
+
 ## What it deliberately doesn't do
 
 - **Tell who carried.** In team games the update is distributed by uncertainty,
@@ -97,6 +118,16 @@ npm run seed                 # optional sample data
 npm run dev
 ```
 
+**If you pulled env from Vercel**, `.env.local` points at the *production*
+database — `npm run dev` would then read and write live data, and `npm run seed`
+would dump 80 fake matches into the real ladder. Put a local URL in
+`.env.development.local`, which Next loads ahead of `.env.local` in development
+and which is already gitignored:
+
+```bash
+echo 'DATABASE_URL="postgresql://localhost/house_elo_dev"' > .env.development.local
+```
+
 ## Tests
 
 ```bash
@@ -122,6 +153,8 @@ They truncate every table between tests — point them at a throwaway database.
 | `lib/schema.sql` | Tables. Source-of-truth and derived, marked as such. |
 | `lib/db.ts` | Driver selection (Neon HTTP / node-postgres). |
 | `app/actions.ts` | Server actions and all input validation. |
+| `lib/tokens.ts` | Caret-aware editing for the comma-separated roster field. |
+| `app/players/` | Player directory, rename, and merge. |
 | `test/` | Engine tests, schema tests, DB integration tests. |
 
 ## Things you may want to change

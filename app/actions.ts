@@ -6,15 +6,20 @@ import { cookies } from "next/headers";
 import {
   createGame,
   createMatch,
+  findMergeConflicts,
   findOrCreatePlayer,
+  findPlayerByName,
   getGame,
+  getPlayerById,
+  mergePlayers,
   recomputeGame,
+  renamePlayer,
   setMatchVoided,
 } from "@/lib/queries";
 import { AUTH_COOKIE, expectedToken, tokenFor } from "@/lib/auth";
 import { parseNames } from "@/lib/format";
 
-export type ActionState = { error?: string } | null;
+export type ActionState = { error?: string; ok?: string } | null;
 
 export async function createGameAction(
   _prev: ActionState,
@@ -134,6 +139,68 @@ export async function recomputeAction(formData: FormData): Promise<void> {
   if (!game) return;
   await recomputeGame(game.id);
   revalidatePath(`/games/${gameSlug}`);
+}
+
+export async function renamePlayerAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const id = String(formData.get("playerId") ?? "");
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return { error: "A player needs a name." };
+
+  const player = await getPlayerById(id);
+  if (!player) return { error: "Player not found." };
+
+  const clash = await findPlayerByName(name);
+  if (clash && clash.id !== id) {
+    return {
+      error: `Another player is already called "${name}". Merge them instead of renaming.`,
+    };
+  }
+
+  await renamePlayer(id, name);
+  revalidatePath("/players");
+  return { ok: `Renamed to ${name}.` };
+}
+
+export async function mergePlayersAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const sourceId = String(formData.get("sourceId") ?? "");
+  const targetId = String(formData.get("targetId") ?? "");
+
+  if (!sourceId || !targetId) return { error: "Pick both players." };
+  if (sourceId === targetId) return { error: "Pick two different players." };
+
+  const [source, target] = await Promise.all([
+    getPlayerById(sourceId),
+    getPlayerById(targetId),
+  ]);
+  if (!source || !target) return { error: "Player not found." };
+
+  const conflicts = await findMergeConflicts(sourceId, targetId);
+  if (conflicts.length > 0) {
+    const first = conflicts[0];
+    return {
+      error:
+        `${source.name} and ${target.name} both played in ${conflicts.length} of the same ` +
+        `match(es) — for example ${first.gameName} on ` +
+        `${first.playedAt.toLocaleDateString("en-US")}, ` +
+        `${first.sameTeam ? "on the same team" : "against each other"}. ` +
+        "Merging would put one person on both sides, so void or fix those matches first.",
+    };
+  }
+
+  const { gamesRecomputed, matchesMoved } = await mergePlayers(sourceId, targetId);
+  revalidatePath("/players");
+  revalidatePath("/");
+  return {
+    ok:
+      `Merged ${source.name} into ${target.name}: ${matchesMoved} match(es) moved, ` +
+      `${gamesRecomputed} game(s) recomputed.`,
+  };
 }
 
 export async function loginAction(

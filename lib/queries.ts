@@ -41,6 +41,20 @@ export type MatchTeamView = {
   players: Player[];
 };
 
+export type PlayerDirectoryRow = Player & {
+  matchesPlayed: number;
+  gamesPlayed: number;
+  lastPlayed: Date | null;
+};
+
+export type MergeConflict = {
+  matchId: string;
+  playedAt: Date;
+  gameName: string;
+  gameSlug: string;
+  sameTeam: boolean;
+};
+
 export type MatchView = {
   id: string;
   playedAt: Date;
@@ -96,6 +110,120 @@ export async function listPlayers(): Promise<Player[]> {
 export async function getPlayerBySlug(slug: string): Promise<Player | null> {
   const rows = await q`select id, slug, name from players where slug = ${slug} limit 1`;
   return rows.length ? (rows[0] as Player) : null;
+}
+
+/** Every player in the system, newest activity surfaced for review. */
+export async function listPlayerDirectory(): Promise<PlayerDirectoryRow[]> {
+  const rows = await q`
+    select p.id, p.slug, p.name,
+           count(mp.match_id)::int          as matches_played,
+           count(distinct m.game_id)::int   as games_played,
+           max(m.played_at)                 as last_played
+    from players p
+    left join match_players mp on mp.player_id = p.id
+    left join matches m on m.id = mp.match_id and not m.voided
+    group by p.id, p.slug, p.name
+    order by p.name asc
+  `;
+  return rows.map((r) => ({
+    id: r.id as string,
+    slug: r.slug as string,
+    name: r.name as string,
+    // The join produces rows for voided matches too; only dated ones counted.
+    matchesPlayed: r.last_played === null ? 0 : Number(r.matches_played),
+    gamesPlayed: Number(r.games_played),
+    lastPlayed: r.last_played ? new Date(r.last_played as string) : null,
+  }));
+}
+
+/** Case-insensitive lookup that does not create. */
+export async function findPlayerByName(name: string): Promise<Player | null> {
+  const rows = await q`
+    select id, slug, name from players where lower(name) = lower(${name.trim()}) limit 1
+  `;
+  return rows.length ? (rows[0] as Player) : null;
+}
+
+export async function getPlayerById(id: string): Promise<Player | null> {
+  const rows = await q`select id, slug, name from players where id = ${id} limit 1`;
+  return rows.length ? (rows[0] as Player) : null;
+}
+
+export async function renamePlayer(id: string, name: string): Promise<void> {
+  await q`update players set name = ${name.trim()} where id = ${id}`;
+}
+
+/**
+ * Matches where both players already appear. Merging these would put one person
+ * on both sides of a result, or silently shrink a team, so a merge that hits
+ * any of them is refused rather than guessed at.
+ */
+export async function findMergeConflicts(
+  sourceId: string,
+  targetId: string,
+): Promise<MergeConflict[]> {
+  const rows = await q`
+    select m.id, m.played_at, g.name as game_name, g.slug as game_slug,
+           (a.team_index = b.team_index) as same_team
+    from match_players a
+    join match_players b on b.match_id = a.match_id
+    join matches m on m.id = a.match_id
+    join games g on g.id = m.game_id
+    where a.player_id = ${sourceId} and b.player_id = ${targetId}
+    order by m.played_at desc
+  `;
+  return rows.map((r) => ({
+    matchId: r.id as string,
+    playedAt: new Date(r.played_at as string),
+    gameName: r.game_name as string,
+    gameSlug: r.game_slug as string,
+    sameTeam: Boolean(r.same_team),
+  }));
+}
+
+/**
+ * Fold `sourceId` into `targetId`: every appearance is reassigned, the
+ * duplicate row is removed, and each affected game's ratings are replayed. The
+ * target's name survives.
+ */
+export async function mergePlayers(
+  sourceId: string,
+  targetId: string,
+): Promise<{ gamesRecomputed: number; matchesMoved: number }> {
+  if (sourceId === targetId) throw new Error("Cannot merge a player into itself");
+
+  const conflicts = await findMergeConflicts(sourceId, targetId);
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Both players appear in ${conflicts.length} of the same match(es); ` +
+        "merging would put one person on both sides.",
+    );
+  }
+
+  // Collect affected games before the reassignment changes what is reachable.
+  const gameRows = await q`
+    select distinct m.game_id
+    from match_players mp
+    join matches m on m.id = mp.match_id
+    where mp.player_id = ${sourceId} or mp.player_id = ${targetId}
+  `;
+  const gameIds = gameRows.map((r) => r.game_id as string);
+
+  const moved = await q`
+    update match_players set player_id = ${targetId}
+    where player_id = ${sourceId}
+    returning match_id
+  `;
+
+  await sql().transaction([
+    sql()`delete from ratings where player_id = ${sourceId}`,
+    sql()`delete from rating_history where player_id = ${sourceId}`,
+    sql()`delete from players where id = ${sourceId}`,
+  ]);
+
+  for (const gameId of gameIds) await recomputeGame(gameId);
+
+  return { gamesRecomputed: gameIds.length, matchesMoved: moved.length };
 }
 
 export async function getLeaderboard(gameId: string): Promise<LeaderboardRow[]> {
