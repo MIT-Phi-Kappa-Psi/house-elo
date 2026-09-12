@@ -161,7 +161,7 @@ export default function MatchForm({
         </label>
       </div>
 
-      {state?.error && <p className="text-sm text-[var(--color-warn)]">{state.error}</p>}
+      {state?.error && <p className="text-sm text-[var(--color-accent)]">{state.error}</p>}
 
       <button className="btn btn-primary" disabled={pending}>
         {pending ? "Saving…" : "Save match"}

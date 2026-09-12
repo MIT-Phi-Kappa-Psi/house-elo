@@ -136,7 +136,7 @@ export default function NewGamePage() {
         </label>
 
         {state?.error && (
-          <p className="text-sm text-[var(--color-warn)]">{state.error}</p>
+          <p className="text-sm text-[var(--color-accent)]">{state.error}</p>
         )}
 
         <button className="btn btn-primary" disabled={pending}>

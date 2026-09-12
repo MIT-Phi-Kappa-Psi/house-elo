@@ -145,10 +145,10 @@ function RenameForm({
         {pending ? "…" : "Save"}
       </button>
       {state?.error && (
-        <span className="text-xs text-[var(--color-warn)]">{state.error}</span>
+        <span className="text-xs text-[var(--color-accent)]">{state.error}</span>
       )}
       {state?.ok && (
-        <span className="text-xs text-[var(--color-accent)]" onAnimationEnd={onDone}>
+        <span className="text-xs text-[var(--color-good)]" onAnimationEnd={onDone}>
           {state.ok}
         </span>
       )}
@@ -226,16 +226,16 @@ function MergePanel({
 
       {source && target && (
         <p className="text-sm">
-          <span className="text-[var(--color-warn)]">{source.name}</span> will be
+          <span className="font-semibold text-[var(--color-accent)]">{source.name}</span> will be
           deleted and their {source.matchesPlayed} match
           {source.matchesPlayed === 1 ? "" : "es"} moved to{" "}
-          <span className="text-[var(--color-accent)]">{target.name}</span>. This
+          <span className="font-semibold text-[var(--color-good)]">{target.name}</span>. This
           cannot be undone.
         </p>
       )}
 
-      {state?.error && <p className="text-sm text-[var(--color-warn)]">{state.error}</p>}
-      {state?.ok && <p className="text-sm text-[var(--color-accent)]">{state.ok}</p>}
+      {state?.error && <p className="text-sm text-[var(--color-accent)]">{state.error}</p>}
+      {state?.ok && <p className="text-sm text-[var(--color-good)]">{state.ok}</p>}
 
       <div className="flex gap-2">
         <button

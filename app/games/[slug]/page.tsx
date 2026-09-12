@@ -82,7 +82,7 @@ export default async function GamePage({
                   <Row key={row.playerId} row={row} position={index + 1} game={game.slug} />
                 ))}
                 {provisional.length > 0 && (
-                  <tr className="border-t border-[var(--color-line)] bg-[#0f1317]">
+                  <tr className="border-t border-[var(--color-line)] bg-[var(--color-ink)]">
                     <td
                       colSpan={5}
                       className="px-4 py-2 text-xs text-[var(--color-muted)]"
@@ -125,7 +125,7 @@ export default async function GamePage({
                         <span
                           className={
                             team.rank === Math.min(...match.teams.map((t) => t.rank))
-                              ? "font-semibold text-[var(--color-accent)]"
+                              ? "font-semibold text-[var(--color-good)]"
                               : "text-[var(--color-muted)]"
                           }
                         >

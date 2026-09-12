@@ -78,8 +78,8 @@ export default function PlayerChipsInput({
               key={`${player}-${index}`}
               className={`inline-flex items-center gap-1 rounded-full py-0.5 pl-2.5 pr-1 text-xs ${
                 isNew
-                  ? "bg-[#3a2f0c] text-[var(--color-warn)]"
-                  : "bg-[#24405c] text-[#cfe3ff]"
+                  ? "bg-[var(--color-warn-soft)] text-[var(--color-warn)]"
+                  : "bg-[var(--color-good-soft)] text-[var(--color-good-deep)]"
               }`}
             >
               {player}
@@ -147,15 +147,15 @@ export default function PlayerChipsInput({
       </div>
 
       {rowCount > 0 && (
-        <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-[var(--color-line)] bg-[#0f1317] shadow-lg">
+        <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] shadow-lg">
           {matches.map((match, index) => (
             <li key={match}>
               <button
                 type="button"
                 className={`block w-full px-3 py-1.5 text-left text-sm ${
                   index === highlight
-                    ? "bg-[var(--color-accent)] text-[#06281c]"
-                    : "hover:bg-[#1b2128]"
+                    ? "bg-[var(--color-accent)] text-[var(--color-on-accent)]"
+                    : "hover:bg-[var(--color-ink)]"
                 }`}
                 // Commit on pointer-down, not click: on a touch screen the
                 // keyboard dismissing blurs the input and tears this list down
@@ -177,8 +177,8 @@ export default function PlayerChipsInput({
                 type="button"
                 className={`block w-full px-3 py-1.5 text-left text-sm ${
                   highlight === matches.length
-                    ? "bg-[var(--color-warn)] text-[#2a1f00]"
-                    : "hover:bg-[#1b2128]"
+                    ? "bg-[var(--color-warn)] text-[var(--color-on-accent)]"
+                    : "hover:bg-[var(--color-ink)]"
                 }`}
                 onPointerDown={(e) => {
                   e.preventDefault();

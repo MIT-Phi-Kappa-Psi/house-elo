@@ -1,23 +1,46 @@
 @import "tailwindcss";
 
+/*
+ * Palette lifted from phikappapsi.mit.edu's own design tokens: cardinal
+ * (#960e22) as the primary, hunter green as the secondary accent, and warm
+ * neutrals rather than cool greys — their background is white, their text a
+ * warm near-black.
+ */
 @theme {
-  --color-ink: #0b0d10;
-  --color-panel: #14181d;
-  --color-line: #232a32;
-  --color-muted: #8a94a2;
-  --color-accent: #6ee7b7;
-  --color-warn: #fbbf24;
+  --color-ink: #f7f5f1;
+  --color-panel: #ffffff;
+  --color-line: #e2ddd9;
+  --color-muted: #6a615e;
+  --color-text: #100c0b;
+
+  /* Cardinal: brand, primary actions, and anything negative. */
+  --color-accent: #960e22;
+  --color-accent-dark: #690313;
+  --color-accent-soft: #fbeaed;
+  --color-on-accent: #fafafa;
+
+  /* Hunter green: wins and gains. Their #12361e is meant for text on the pale
+     green surface; on white it reads as bold black, so text gets a lighter
+     hunter and the deep token stays paired with its own background. */
+  --color-good: #1a5c33;
+  --color-good-deep: #12361e;
+  --color-good-soft: #e7f2ea;
+
+  /* Amber: flags that are neither a win nor a loss. */
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fdf1dc;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   background: var(--color-ink);
-  color: #e6eaef;
+  color: var(--color-text);
   font-family: var(--font-sans);
 }
 
@@ -29,7 +52,7 @@ body {
 
 .field {
   width: 100%;
-  background: #0f1317;
+  background: var(--color-panel);
   border: 1px solid var(--color-line);
   border-radius: 0.5rem;
   padding: 0.5rem 0.7rem;
@@ -50,12 +73,13 @@ body {
   font-size: 0.875rem;
   font-weight: 600;
   border: 1px solid var(--color-line);
+  background: var(--color-panel);
   cursor: pointer;
 }
 .btn-primary {
   background: var(--color-accent);
-  color: #06281c;
+  color: var(--color-on-accent);
   border-color: transparent;
 }
-.btn-primary:hover { filter: brightness(1.08); }
-.btn-ghost:hover { background: #1b2128; }
+.btn-primary:hover { background: var(--color-accent-dark); }
+.btn-ghost:hover { background: var(--color-ink); }

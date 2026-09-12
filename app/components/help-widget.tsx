@@ -40,7 +40,7 @@ export default function HelpWidget() {
         aria-label={open ? "Close feedback form" : "Report a bug or request a change"}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-4 right-4 z-40 flex size-12 items-center justify-center rounded-full bg-[var(--color-accent)] text-xl font-bold text-[#06281c] shadow-lg transition hover:brightness-110 sm:bottom-6 sm:right-6"
+        className="fixed bottom-4 right-4 z-40 flex size-12 items-center justify-center rounded-full bg-[var(--color-accent)] text-xl font-bold text-[var(--color-on-accent)] shadow-lg transition hover:brightness-110 sm:bottom-6 sm:right-6"
       >
         {open ? "×" : "?"}
       </button>
@@ -97,10 +97,10 @@ export default function HelpWidget() {
               </label>
 
               {state?.error && (
-                <p className="text-sm text-[var(--color-warn)]">{state.error}</p>
+                <p className="text-sm text-[var(--color-accent)]">{state.error}</p>
               )}
               {state?.ok && (
-                <p className="text-sm text-[var(--color-accent)]">{state.ok}</p>
+                <p className="text-sm text-[var(--color-good)]">{state.ok}</p>
               )}
 
               <div className="flex gap-2">

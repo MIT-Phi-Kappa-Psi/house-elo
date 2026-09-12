@@ -94,6 +94,19 @@ npm run tickets -- rm <id>        # delete one
 This is also the point of the CLI: it hands the whole backlog to a coding agent
 without screenshots.
 
+## Colours
+
+The palette comes from phikappapsi.mit.edu's own design tokens: cardinal
+`#960e22` as the primary, hunter green as the secondary, warm neutrals rather
+than cool greys, and a light background. All of it lives in `@theme` at the top
+of `app/globals.css`; no component hardcodes a colour.
+
+Semantically: cardinal carries the brand, primary actions, losses and errors;
+hunter green carries wins and rating gains; amber is reserved for flags that are
+neither (a new player, a naked-lap tally). Their `#12361e` is meant for text on
+their pale-green surface — on white it reads as bold black, so text uses a
+lighter hunter and the deep token stays paired with its own background.
+
 ## Storage
 
 The database is on Neon's free tier: **512 MB**, shared by data and history

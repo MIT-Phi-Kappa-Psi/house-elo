@@ -106,7 +106,7 @@ export default async function PlayerPage({
                         <span
                           className={
                             team.rank === best
-                              ? "text-[var(--color-accent)]"
+                              ? "text-[var(--color-good)]"
                               : "text-[var(--color-muted)]"
                           }
                         >
@@ -121,9 +121,9 @@ export default async function PlayerPage({
                       <span
                         className={
                           entry.delta > 0
-                            ? "text-[var(--color-accent)]"
+                            ? "text-[var(--color-good)]"
                             : entry.delta < 0
-                              ? "text-[var(--color-warn)]"
+                              ? "text-[var(--color-accent)]"
                               : "text-[var(--color-muted)]"
                         }
                       >

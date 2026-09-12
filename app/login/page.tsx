@@ -23,7 +23,7 @@ function LoginForm() {
         className="field"
         placeholder="Password"
       />
-      {state?.error && <p className="text-sm text-[var(--color-warn)]">{state.error}</p>}
+      {state?.error && <p className="text-sm text-[var(--color-accent)]">{state.error}</p>}
       <button className="btn btn-primary w-full justify-center" disabled={pending}>
         {pending ? "Checking…" : "Enter"}
       </button>
