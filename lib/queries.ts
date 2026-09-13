@@ -98,13 +98,25 @@ function toGame(row: Row): Game {
   };
 }
 
-export async function listGames(): Promise<(Game & { matchCount: number; playerCount: number })[]> {
+/**
+ * Games ordered by how active they have been in the last seven days, so the
+ * board reflects what the house is currently playing. The recent count is only
+ * a sort key and is never shown; ties fall back to lifetime matches, then name,
+ * which keeps the order total and stable rather than arbitrary.
+ */
+export async function listGames(): Promise<
+  (Game & { matchCount: number; playerCount: number })[]
+> {
   const rows = await q`
     select g.*,
-           (select count(*) from matches m where m.game_id = g.id and not m.voided) as match_count,
+           (select count(*) from matches m
+             where m.game_id = g.id and not m.voided) as match_count,
+           (select count(*) from matches m
+             where m.game_id = g.id and not m.voided
+               and m.played_at >= now() - interval '7 days') as recent_count,
            (select count(*) from ratings r where r.game_id = g.id) as player_count
     from games g
-    order by g.name asc
+    order by recent_count desc, match_count desc, g.name asc
   `;
   return rows.map((r) => ({
     ...toGame(r),

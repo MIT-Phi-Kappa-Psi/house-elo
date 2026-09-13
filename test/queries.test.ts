@@ -77,6 +77,116 @@ test("creating a game gives it a slug and makes it listable", opts, async () => 
   assert.equal(all[0].matchCount, 0);
 });
 
+test("games rank by the last seven days, then lifetime, then name", opts, async () => {
+  const mk = (name: string) =>
+    createGame({
+      name,
+      minTeamSize: 1,
+      maxTeamSize: 1,
+      minTeamsPerMatch: 2,
+      maxTeamsPerMatch: 2,
+      allowsDraws: false,
+    });
+  // Deliberately created out of alphabetical order.
+  const zulu = await mk("Zulu");
+  const alpha = await mk("Alpha");
+  const bravo = await mk("Bravo");
+  const quiet = await mk("Quiet");
+
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  const play = (gameId: string, playedAt: Date) =>
+    createMatch({
+      gameId,
+      playedAt,
+      teams: [
+        { rank: 1, playerIds: [a.id] },
+        { rank: 2, playerIds: [b.id] },
+      ],
+    });
+
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+
+  // Zulu: 2 this week. Alpha and Bravo: 1 each this week, but Bravo has more
+  // lifetime matches. Quiet: 3 matches, all older than a week.
+  await play(zulu.id, daysAgo(1));
+  await play(zulu.id, daysAgo(2));
+  await play(alpha.id, daysAgo(3));
+  await play(bravo.id, daysAgo(3));
+  await play(bravo.id, daysAgo(30));
+  for (const n of [20, 40, 60]) await play(quiet.id, daysAgo(n));
+
+  const order = (await listGames()).map((g) => g.name);
+  assert.deepEqual(order, ["Zulu", "Bravo", "Alpha", "Quiet"]);
+});
+
+test("games with no recent play fall back to lifetime then alphabetical", opts, async () => {
+  const mk = (name: string) =>
+    createGame({
+      name,
+      minTeamSize: 1,
+      maxTeamSize: 1,
+      minTeamsPerMatch: 2,
+      maxTeamsPerMatch: 2,
+      allowsDraws: false,
+    });
+  const zebra = await mk("Zebra");
+  const apple = await mk("Apple");
+  const busy = await mk("Busy");
+
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  for (const n of [40, 50]) {
+    await createMatch({
+      gameId: busy.id,
+      playedAt: new Date(Date.now() - n * 86_400_000),
+      teams: [
+        { rank: 1, playerIds: [a.id] },
+        { rank: 2, playerIds: [b.id] },
+      ],
+    });
+  }
+
+  // Busy leads on lifetime; the two empty games are purely alphabetical.
+  assert.deepEqual(
+    (await listGames()).map((g) => g.name),
+    ["Busy", "Apple", "Zebra"],
+  );
+  assert.equal(zebra.name, "Zebra");
+});
+
+test("a voided match stops counting toward a game's ranking", opts, async () => {
+  const mk = (name: string) =>
+    createGame({
+      name,
+      minTeamSize: 1,
+      maxTeamSize: 1,
+      minTeamsPerMatch: 2,
+      maxTeamsPerMatch: 2,
+      allowsDraws: false,
+    });
+  const one = await mk("One");
+  const two = await mk("Two");
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+
+  const matchId = await createMatch({
+    gameId: one.id,
+    playedAt: new Date(),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  assert.equal((await listGames())[0].name, "One");
+
+  await setMatchVoided(matchId, true);
+  assert.deepEqual(
+    (await listGames()).map((g) => g.name),
+    ["One", "Two"],
+    "both are now empty, so alphabetical decides",
+  );
+  assert.equal((await listGames())[0].matchCount, 0);
+  assert.equal(two.name, "Two");
+});
+
 test("game slugs are de-duplicated", opts, async () => {
   await pool();
   const second = await pool();
