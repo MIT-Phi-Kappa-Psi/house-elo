@@ -96,7 +96,7 @@ test("the two rankings can disagree", opts, async () => {
   assert.equal(byTotal[0].total, 20);
 });
 
-test("one logging event covers several players", opts, async () => {
+test("the query layer still counts by weight, whatever the app writes", opts, async () => {
   const ids = [];
   for (const n of ["A", "B", "C"]) ids.push((await findOrCreatePlayer(n)).id);
   const written = await createStrikeouts({
@@ -181,4 +181,16 @@ test("winter and summer offsets are both handled", () => {
   // EST (UTC-5) in January, EDT (UTC-4) in July.
   assert.equal(fromHouseLocal("2026-01-15T08:00").toISOString(), "2026-01-15T13:00:00.000Z");
   assert.equal(fromHouseLocal("2026-07-15T08:00").toISOString(), "2026-07-15T12:00:00.000Z");
+});
+
+test("logging is one strikeout per entry", opts, async () => {
+  const p = await findOrCreatePlayer("Solo");
+  // Three separate entries, the way the form produces them.
+  for (const hour of [21, 22, 23]) {
+    await createStrikeouts({ playerIds: [p.id], amount: 1, occurredAt: et(10, hour) });
+  }
+  const [s] = await getStrikeoutStandings();
+  assert.equal(s.total, 3);
+  assert.equal(s.bestDay, 3, "three singles on one night is a three-night");
+  assert.equal((await listStrikeouts()).length, 3, "each is its own row");
 });

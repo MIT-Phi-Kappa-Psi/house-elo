@@ -133,7 +133,8 @@ create table if not exists strikeouts (
   id          uuid primary key default gen_random_uuid(),
   player_id   uuid not null references players(id) on delete cascade,
   occurred_at timestamptz not null default now(),
-  -- One row can carry several at once, so a big night is not twenty inserts.
+  -- Weight of the row. The app writes 1 and only 1; the column stays so the
+  -- sums are by weight rather than by row, should that ever change.
   amount      int not null default 1,
   note        text,
   created_at  timestamptz not null default now(),

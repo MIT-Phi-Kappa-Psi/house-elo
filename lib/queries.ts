@@ -892,7 +892,11 @@ export async function listStrikeouts(limit = 50): Promise<StrikeoutEntry[]> {
   }));
 }
 
-/** One row per player, so a single logging event can cover a whole table. */
+/**
+ * One row per strikeout. `amount` stays in the schema and in the sums below so
+ * any row is counted by its own weight, but the app only ever writes 1 — the
+ * product rule is one strikeout per entry.
+ */
 export async function createStrikeouts(input: {
   playerIds: string[];
   amount: number;

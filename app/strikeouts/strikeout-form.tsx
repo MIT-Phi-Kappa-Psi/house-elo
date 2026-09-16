@@ -16,7 +16,6 @@ export default function StrikeoutLogger({
 }) {
   const [open, setOpen] = useState(false);
   const [players, setPlayers] = useState<string[]>([]);
-  const [amount, setAmount] = useState("1");
   const panelRef = useRef<HTMLDivElement>(null);
 
   const [state, action, pending] = useActionState<ActionState, FormData>(
@@ -70,23 +69,13 @@ export default function StrikeoutLogger({
                 selected={players}
                 onChange={setPlayers}
                 known={knownPlayers}
+                max={1}
                 placeholder="Add a player…"
+                fullLabel="One at a time — remove to change"
               />
             </label>
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="text-xs text-[var(--color-muted)]">
-                How many (each)
-                <input
-                  name="amount"
-                  type="number"
-                  min={1}
-                  max={100}
-                  className="field mt-1"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              </label>
+            <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-xs text-[var(--color-muted)]">
                 When (optional — defaults to now)
                 <input name="occurredAt" type="datetime-local" className="field mt-1" />
@@ -104,7 +93,7 @@ export default function StrikeoutLogger({
 
             <button
               className="btn btn-primary"
-              disabled={pending || players.length === 0}
+              disabled={pending || players.length !== 1}
             >
               {pending ? "Logging…" : "Log it"}
             </button>

@@ -74,6 +74,7 @@ export default function MatchForm({
                     ),
                 )}
                 max={game.maxTeamSize}
+                fullLabel={`Team full (${game.maxTeamSize})`}
               />
             </label>
 

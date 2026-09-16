@@ -256,38 +256,27 @@ export async function createStrikeoutAction(
   formData: FormData,
 ): Promise<ActionState> {
   const names = parseNames(String(formData.get("players") ?? ""));
-  if (names.length === 0) return { error: "Pick at least one player." };
-
-  const amount = Number(formData.get("amount") ?? 1);
-  if (!Number.isInteger(amount) || amount < 1 || amount > 100) {
-    return { error: "Amount must be a whole number between 1 and 100." };
-  }
+  if (names.length === 0) return { error: "Pick a player." };
+  // One strikeout per entry. Enforced here rather than only in the form, so a
+  // hand-rolled submission cannot log a batch either.
+  if (names.length > 1) return { error: "Log one strikeout at a time." };
 
   const raw = String(formData.get("occurredAt") ?? "").trim();
   // A bare datetime-local value means house wall-clock time, not server time.
   const occurredAt = raw ? fromHouseLocal(raw) : new Date();
   if (Number.isNaN(occurredAt.getTime())) return { error: "That time could not be read." };
 
-  const players = [];
-  for (const name of names) players.push(await findOrCreatePlayer(name));
-
-  const ids = players.map((p) => p.id);
-  if (new Set(ids).size !== ids.length) {
-    return { error: "The same player is listed twice." };
-  }
+  const player = await findOrCreatePlayer(names[0]);
 
   await createStrikeouts({
-    playerIds: ids,
-    amount,
+    playerIds: [player.id],
+    amount: 1,
     occurredAt,
     note: String(formData.get("note") ?? "").trim() || null,
   });
 
   revalidatePath("/strikeouts");
-  const who = players.map((p) => p.name).join(", ");
-  return {
-    ok: `Logged ${amount} for ${who}.`,
-  };
+  return { ok: `Logged one for ${player.name}.` };
 }
 
 export async function deleteStrikeoutAction(formData: FormData): Promise<void> {

@@ -26,6 +26,7 @@ export default function PlayerChipsInput({
   known,
   max,
   placeholder = "Add a player…",
+  fullLabel,
 }: {
   name: string;
   selected: string[];
@@ -33,6 +34,8 @@ export default function PlayerChipsInput({
   known: string[];
   max?: number;
   placeholder?: string;
+  /** Shown in place of the input once `max` is reached. */
+  fullLabel?: string;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -102,7 +105,7 @@ export default function PlayerChipsInput({
 
         {full ? (
           <span className="py-0.5 text-xs text-[var(--color-muted)]">
-            Team full ({max})
+            {fullLabel ?? `Team full (${max})`}
           </span>
         ) : (
           <input
