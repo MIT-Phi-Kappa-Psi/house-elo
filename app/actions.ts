@@ -16,10 +16,13 @@ import {
   renamePlayer,
   setMatchVoided,
   createTicket,
+  createStrikeouts,
+  deleteStrikeout,
 } from "@/lib/queries";
 import { TICKET_KINDS, type TicketKind } from "@/lib/tickets";
 import { AUTH_COOKIE, expectedToken, tokenFor } from "@/lib/auth";
 import { parseNames } from "@/lib/format";
+import { fromHouseLocal } from "@/lib/house-day";
 
 export type ActionState = { error?: string; ok?: string } | null;
 
@@ -139,7 +142,7 @@ export async function createMatchAction(
   }
 
   const playedAtRaw = String(formData.get("playedAt") ?? "").trim();
-  const playedAt = playedAtRaw ? new Date(playedAtRaw) : new Date();
+  const playedAt = playedAtRaw ? fromHouseLocal(playedAtRaw) : new Date();
   if (Number.isNaN(playedAt.getTime())) return { error: "That date could not be read." };
 
   const note = String(formData.get("note") ?? "").trim() || null;
@@ -246,6 +249,52 @@ export async function createTicketAction(
   });
   revalidatePath("/tickets");
   return { ok: "Filed. Thanks — it'll get triaged." };
+}
+
+export async function createStrikeoutAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const names = parseNames(String(formData.get("players") ?? ""));
+  if (names.length === 0) return { error: "Pick at least one player." };
+
+  const amount = Number(formData.get("amount") ?? 1);
+  if (!Number.isInteger(amount) || amount < 1 || amount > 100) {
+    return { error: "Amount must be a whole number between 1 and 100." };
+  }
+
+  const raw = String(formData.get("occurredAt") ?? "").trim();
+  // A bare datetime-local value means house wall-clock time, not server time.
+  const occurredAt = raw ? fromHouseLocal(raw) : new Date();
+  if (Number.isNaN(occurredAt.getTime())) return { error: "That time could not be read." };
+
+  const players = [];
+  for (const name of names) players.push(await findOrCreatePlayer(name));
+
+  const ids = players.map((p) => p.id);
+  if (new Set(ids).size !== ids.length) {
+    return { error: "The same player is listed twice." };
+  }
+
+  await createStrikeouts({
+    playerIds: ids,
+    amount,
+    occurredAt,
+    note: String(formData.get("note") ?? "").trim() || null,
+  });
+
+  revalidatePath("/strikeouts");
+  const who = players.map((p) => p.name).join(", ");
+  return {
+    ok: `Logged ${amount} for ${who}.`,
+  };
+}
+
+export async function deleteStrikeoutAction(formData: FormData): Promise<void> {
+  const id = String(formData.get("strikeoutId") ?? "");
+  if (!id) return;
+  await deleteStrikeout(id);
+  revalidatePath("/strikeouts");
 }
 
 export async function loginAction(

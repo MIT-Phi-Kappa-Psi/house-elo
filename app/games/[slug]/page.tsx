@@ -148,7 +148,7 @@ export default async function GamePage({
                         name="voided"
                         value={match.voided ? "false" : "true"}
                       />
-                      <button className="underline hover:text-white">
+                      <button className="underline hover:text-[var(--color-text)]">
                         {match.voided ? "restore" : "void"}
                       </button>
                     </form>

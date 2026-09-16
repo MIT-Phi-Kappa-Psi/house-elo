@@ -18,8 +18,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               House<span className="text-[var(--color-accent)]">Elo</span>
             </Link>
             <nav className="flex items-center gap-4 text-sm text-[var(--color-muted)]">
-              <Link href="/" className="hover:text-white">Games</Link>
-              <Link href="/players" className="hover:text-white">Players</Link>
+              <Link href="/" className="hover:text-[var(--color-text)]">Games</Link>
+              <Link href="/players" className="hover:text-[var(--color-text)]">Players</Link>
+              <Link href="/strikeouts" className="hover:text-[var(--color-text)]">Strikeouts</Link>
             </nav>
           </div>
         </header>
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             href="https://openskill.me"
             target="_blank"
             rel="noreferrer"
-            className="underline hover:text-white"
+            className="underline hover:text-[var(--color-text)]"
           >
             OpenSkill
           </a>{" "}

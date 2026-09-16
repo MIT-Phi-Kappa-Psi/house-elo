@@ -94,7 +94,7 @@ export default function PlayerDirectory({
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      className="text-xs text-[var(--color-muted)] underline hover:text-white"
+                      className="text-xs text-[var(--color-muted)] underline hover:text-[var(--color-text)]"
                       onClick={() =>
                         setEditing((e) => (e === player.id ? null : player.id))
                       }
@@ -111,7 +111,7 @@ export default function PlayerDirectory({
 
       <p className="text-xs text-[var(--color-muted)]">
         Ratings live per game — open a game from{" "}
-        <Link href="/" className="underline hover:text-white">
+        <Link href="/" className="underline hover:text-[var(--color-text)]">
           Games
         </Link>{" "}
         to see a player's standing and history there.

@@ -123,3 +123,21 @@ create table if not exists tickets (
   constraint ticket_status check (status in ('open', 'planned', 'done', 'declined'))
 );
 create index if not exists tickets_status_idx on tickets (status, created_at desc);
+
+-- ---------------------------------------------------------------------------
+-- Strikeouts. A tally attached to a person at a time, sharing the same players
+-- as matches. Independent of ratings.
+-- ---------------------------------------------------------------------------
+
+create table if not exists strikeouts (
+  id          uuid primary key default gen_random_uuid(),
+  player_id   uuid not null references players(id) on delete cascade,
+  occurred_at timestamptz not null default now(),
+  -- One row can carry several at once, so a big night is not twenty inserts.
+  amount      int not null default 1,
+  note        text,
+  created_at  timestamptz not null default now(),
+  constraint strikeout_amount_positive check (amount >= 1)
+);
+create index if not exists strikeouts_player_idx on strikeouts (player_id, occurred_at desc);
+create index if not exists strikeouts_occurred_idx on strikeouts (occurred_at desc);

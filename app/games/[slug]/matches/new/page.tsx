@@ -22,7 +22,7 @@ export default async function NewMatchPage({
       <div>
         <Link
           href={`/games/${game.slug}`}
-          className="text-xs text-[var(--color-muted)] hover:text-white"
+          className="text-xs text-[var(--color-muted)] hover:text-[var(--color-text)]"
         >
           ← {game.name}
         </Link>

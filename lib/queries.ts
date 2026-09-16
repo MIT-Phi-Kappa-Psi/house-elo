@@ -1,4 +1,5 @@
 import { sql, q, slugify, type Row } from "./db";
+import { houseDayExpr, toHouseDayString } from "./house-day";
 import {
   TICKET_KINDS,
   TICKET_STATUSES,
@@ -804,4 +805,113 @@ export async function setTicketStatus(
 
 export async function deleteTicket(id: string): Promise<void> {
   await q`delete from tickets where id = ${id}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Strikeouts                                                                  */
+/* -------------------------------------------------------------------------- */
+
+export type StrikeoutStanding = Player & {
+  /** Lifetime total. */
+  total: number;
+  /** Most in a single house day (6am-6am). */
+  bestDay: number;
+  /** Which house day that record was set on, as YYYY-MM-DD. */
+  bestDayOn: string | null;
+};
+
+export type StrikeoutEntry = {
+  id: string;
+  playerId: string;
+  playerName: string;
+  playerSlug: string;
+  occurredAt: Date;
+  houseDay: string;
+  amount: number;
+  note: string | null;
+};
+
+/**
+ * Both rankings in one pass: lifetime totals and the best single house day.
+ *
+ * Grouping by house day first is what makes the 6am boundary meaningful — a
+ * strikeout at 2am belongs to the night before, so it must be bucketed before
+ * anything is summed or maximised.
+ */
+export async function getStrikeoutStandings(): Promise<StrikeoutStanding[]> {
+  const day = houseDayExpr("s.occurred_at");
+  const rows = await sql().raw(`
+    with daily as (
+      select s.player_id, ${day} as house_day, sum(s.amount)::int as n
+      from strikeouts s
+      group by s.player_id, ${day}
+    )
+    select p.id, p.slug, p.name,
+           coalesce(sum(d.n), 0)::int as total,
+           coalesce(max(d.n), 0)::int as best_day,
+           (array_agg(d.house_day order by d.n desc, d.house_day desc))[1] as best_day_on
+    from players p
+    left join daily d on d.player_id = p.id
+    group by p.id, p.slug, p.name
+  `);
+
+  return rows.map((r) => ({
+    id: r.id as string,
+    slug: r.slug as string,
+    name: r.name as string,
+    total: Number(r.total),
+    bestDay: Number(r.best_day),
+    bestDayOn: toHouseDayString(r.best_day_on),
+  }));
+}
+
+export async function listStrikeouts(limit = 50): Promise<StrikeoutEntry[]> {
+  const day = houseDayExpr("s.occurred_at");
+  const rows = await sql().raw(
+    `
+    select s.id, s.occurred_at, s.amount, s.note,
+           ${day} as house_day,
+           p.id as player_id, p.name as player_name, p.slug as player_slug
+    from strikeouts s
+    join players p on p.id = s.player_id
+    order by s.occurred_at desc, s.created_at desc
+    limit $1
+    `,
+    [limit],
+  );
+
+  return rows.map((r) => ({
+    id: r.id as string,
+    playerId: r.player_id as string,
+    playerName: r.player_name as string,
+    playerSlug: r.player_slug as string,
+    occurredAt: new Date(r.occurred_at as string),
+    houseDay: toHouseDayString(r.house_day) ?? "",
+    amount: Number(r.amount),
+    note: (r.note as string | null) ?? null,
+  }));
+}
+
+/** One row per player, so a single logging event can cover a whole table. */
+export async function createStrikeouts(input: {
+  playerIds: string[];
+  amount: number;
+  occurredAt: Date;
+  note?: string | null;
+}): Promise<number> {
+  if (input.playerIds.length === 0) return 0;
+  await sql().transaction(
+    input.playerIds.map(
+      (playerId) => sql()`
+        insert into strikeouts (player_id, occurred_at, amount, note)
+        values (${playerId}, ${input.occurredAt.toISOString()}, ${input.amount},
+                ${input.note ?? null})
+      `,
+    ),
+  );
+  return input.playerIds.length;
+}
+
+export async function deleteStrikeout(id: string): Promise<void> {
+  await q`delete from strikeouts where id = ${id}`;
 }
