@@ -61,6 +61,10 @@ export type PlayerDirectoryRow = Player & {
   gamesPlayed: number;
   nakedLaps: number;
   lastPlayed: Date | null;
+  /** House-wide rating, or null for anyone no match has rated yet. */
+  overallRating: number | null;
+  overallSigma: number | null;
+  overallProvisional: boolean;
 };
 
 export type MergeConflict = {
@@ -142,10 +146,14 @@ export async function getPlayerBySlug(slug: string): Promise<Player | null> {
 }
 
 /**
- * Every player, ranked by naked laps — the house's leaderboard of shame.
+ * Every player, with the four numbers the directory can rank on: overall
+ * rating, naked laps, matches and distinct games. The page sorts client-side,
+ * so this only needs to be a total order, not the one being displayed.
  *
- * Both counts join through `matches` so voided matches are excluded; counting
- * `match_players` directly would keep tallying rows whose match was voided.
+ * The counts all join through `matches` so voided matches are excluded;
+ * counting `match_players` directly would keep tallying rows whose match was
+ * voided. `overall_ratings` is left-joined because a player can exist with no
+ * ratable match behind them, and must still appear here.
  */
 export async function listPlayerDirectory(): Promise<PlayerDirectoryRow[]> {
   const rows = await q`
@@ -153,24 +161,36 @@ export async function listPlayerDirectory(): Promise<PlayerDirectoryRow[]> {
            count(m.id)::int                                       as matches_played,
            count(distinct m.game_id)::int                         as games_played,
            count(*) filter (where mt.naked_lap)::int              as naked_laps,
-           max(m.played_at)                                       as last_played
+           max(m.played_at)                                       as last_played,
+           o.mu                                                   as overall_mu,
+           o.sigma                                                as overall_sigma,
+           o.matches_played                                       as overall_matches
     from players p
     left join match_players mp on mp.player_id = p.id
     left join matches m on m.id = mp.match_id and not m.voided
     left join match_teams mt
       on mt.match_id = m.id and mt.team_index = mp.team_index
-    group by p.id, p.slug, p.name
-    order by naked_laps desc, matches_played desc, p.name asc
+    left join overall_ratings o on o.player_id = p.id
+    group by p.id, p.slug, p.name, o.mu, o.sigma, o.matches_played
+    order by (o.mu - 3 * o.sigma) desc nulls last, matches_played desc, p.name asc
   `;
-  return rows.map((r) => ({
-    id: r.id as string,
-    slug: r.slug as string,
-    name: r.name as string,
-    matchesPlayed: Number(r.matches_played),
-    gamesPlayed: Number(r.games_played),
-    nakedLaps: Number(r.naked_laps),
-    lastPlayed: r.last_played ? new Date(r.last_played as string) : null,
-  }));
+  return rows.map((r) => {
+    const rated = r.overall_mu !== null && r.overall_mu !== undefined;
+    const mu = Number(r.overall_mu);
+    const sigma = Number(r.overall_sigma);
+    return {
+      id: r.id as string,
+      slug: r.slug as string,
+      name: r.name as string,
+      matchesPlayed: Number(r.matches_played),
+      gamesPlayed: Number(r.games_played),
+      nakedLaps: Number(r.naked_laps),
+      lastPlayed: r.last_played ? new Date(r.last_played as string) : null,
+      overallRating: rated ? displayRating({ mu, sigma }) : null,
+      overallSigma: rated ? sigma : null,
+      overallProvisional: rated && Number(r.overall_matches) < PROVISIONAL_MATCHES,
+    };
+  });
 }
 
 /** Case-insensitive lookup that does not create. */
@@ -255,10 +275,13 @@ export async function mergePlayers(
   await sql().transaction([
     sql()`delete from ratings where player_id = ${sourceId}`,
     sql()`delete from rating_history where player_id = ${sourceId}`,
+    sql()`delete from overall_ratings where player_id = ${sourceId}`,
     sql()`delete from players where id = ${sourceId}`,
   ]);
 
   for (const gameId of gameIds) await recomputeGame(gameId);
+  // Once, after the loop: the overall replay covers every game anyway.
+  await recomputeOverall();
 
   return { gamesRecomputed: gameIds.length, matchesMoved: moved.length };
 }
@@ -496,7 +519,42 @@ export async function createMatch(input: {
   if (playerStatements.length) await sql().transaction(playerStatements);
 
   await applyNewMatch(input.gameId, matchId, playedAt);
+  await applyNewMatchOverall(matchId, playedAt);
   return matchId;
+}
+
+/** One match's teams and rosters, in the replay's input shape. */
+async function loadMatch(matchId: string, playedAt: Date): Promise<MatchInput> {
+  const rows = await q`
+    select mt.match_id as id, mt.team_index, mt.rank, mp.player_id
+    from match_teams mt
+    left join match_players mp
+      on mp.match_id = mt.match_id and mp.team_index = mt.team_index
+    where mt.match_id = ${matchId}
+    order by mt.team_index asc
+  `;
+  const [match] = groupMatchInputs(
+    rows.map((r) => ({ ...r, played_at: playedAt.toISOString() })),
+  );
+  return match ?? { id: matchId, playedAt, teams: [] };
+}
+
+/** Stored rating rows back into the engine's in-memory state. */
+function toStates(rows: Row[]): Map<string, PlayerState> {
+  return new Map(
+    rows.map((r) => [
+      r.player_id as string,
+      {
+        playerId: r.player_id as string,
+        mu: Number(r.mu),
+        sigma: Number(r.sigma),
+        matchesPlayed: Number(r.matches_played),
+        wins: Number(r.wins),
+        losses: Number(r.losses),
+        draws: Number(r.draws),
+      },
+    ]),
+  );
 }
 
 /**
@@ -525,23 +583,7 @@ async function applyNewMatch(
     return;
   }
 
-  const rows = await q`
-    select mt.team_index, mt.rank, mp.player_id
-    from match_teams mt
-    left join match_players mp
-      on mp.match_id = mt.match_id and mp.team_index = mt.team_index
-    where mt.match_id = ${matchId}
-    order by mt.team_index asc
-  `;
-
-  const match: MatchInput = { id: matchId, playedAt, teams: [] };
-  for (const row of rows) {
-    const teamIndex = Number(row.team_index);
-    while (match.teams.length <= teamIndex) match.teams.push({ rank: 0, playerIds: [] });
-    match.teams[teamIndex].rank = Number(row.rank);
-    if (row.player_id) match.teams[teamIndex].playerIds.push(row.player_id as string);
-  }
-
+  const match = await loadMatch(matchId, playedAt);
   const playerIds = match.teams.flatMap((t) => t.playerIds);
   if (playerIds.length === 0) return;
 
@@ -554,20 +596,7 @@ async function applyNewMatch(
     q`select coalesce(max(seq), 0) as seq from rating_history where game_id = ${gameId}`,
   ]);
 
-  const states = new Map<string, PlayerState>(
-    existing.map((r) => [
-      r.player_id as string,
-      {
-        playerId: r.player_id as string,
-        mu: Number(r.mu),
-        sigma: Number(r.sigma),
-        matchesPlayed: Number(r.matches_played),
-        wins: Number(r.wins),
-        losses: Number(r.losses),
-        draws: Number(r.draws),
-      },
-    ]),
-  );
+  const states = toStates(existing);
 
   const history = applyMatch(states, match, Number(seqRow[0].seq) + 1);
   if (history.length === 0) return;
@@ -621,7 +650,10 @@ export async function setMatchVoided(matchId: string, voided: boolean): Promise<
   `;
   if (!rows.length) throw new Error("Match not found");
   const gameId = rows[0].game_id as string;
+  // Removing a match from the middle of the log changes everything after it,
+  // in its own game and house-wide, so both projections are rebuilt whole.
   await recomputeGame(gameId);
+  await recomputeOverall();
   return gameId;
 }
 
@@ -637,16 +669,13 @@ export async function setMatchVoided(matchId: string, voided: boolean): Promise<
  * match — or changing the rating model entirely — needs no migration and
  * leaves no drift behind.
  */
-export async function recomputeGame(gameId: string): Promise<void> {
-  const rows = await q`
-    select m.id, m.played_at, mt.team_index, mt.rank, mp.player_id
-    from matches m
-    join match_teams mt on mt.match_id = m.id
-    left join match_players mp on mp.match_id = m.id and mp.team_index = mt.team_index
-    where m.game_id = ${gameId} and not m.voided
-    order by m.played_at asc, m.id asc, mt.team_index asc
-  `;
-
+/**
+ * Fold flat `(match, team, player)` rows into the replay's input shape. One
+ * row per player per team, so a match spans however many rows its rosters add
+ * up to; teams are addressed by index rather than appended, because a team
+ * with no players yields a single row with a null `player_id`.
+ */
+function groupMatchInputs(rows: Row[]): MatchInput[] {
   const matches = new Map<string, MatchInput>();
   for (const row of rows) {
     const id = row.id as string;
@@ -662,8 +691,20 @@ export async function recomputeGame(gameId: string): Promise<void> {
     match.teams[teamIndex].rank = Number(row.rank);
     if (row.player_id) match.teams[teamIndex].playerIds.push(row.player_id as string);
   }
+  return [...matches.values()];
+}
 
-  const { states, history } = replay([...matches.values()]);
+export async function recomputeGame(gameId: string): Promise<void> {
+  const rows = await q`
+    select m.id, m.played_at, mt.team_index, mt.rank, mp.player_id
+    from matches m
+    join match_teams mt on mt.match_id = m.id
+    left join match_players mp on mp.match_id = m.id and mp.team_index = mt.team_index
+    where m.game_id = ${gameId} and not m.voided
+    order by m.played_at asc, m.id asc, mt.team_index asc
+  `;
+
+  const { states, history } = replay(groupMatchInputs(rows));
 
   const statements = [
     sql()`delete from rating_history where game_id = ${gameId}`,
@@ -709,6 +750,96 @@ export async function recomputeGame(gameId: string): Promise<void> {
   }
 
   await sql().transaction(statements);
+}
+
+/** Upsert of a set of house-wide states. Shared by the full and incremental paths. */
+function upsertOverall(states: PlayerState[]) {
+  return sql()`
+    insert into overall_ratings
+      (player_id, mu, sigma, matches_played, wins, losses, draws, updated_at)
+    select t.player_id::uuid, t.mu, t.sigma,
+           t.matches_played, t.wins, t.losses, t.draws, now()
+    from unnest(
+      ${states.map((x) => x.playerId)}::text[],
+      ${states.map((x) => x.mu)}::double precision[],
+      ${states.map((x) => x.sigma)}::double precision[],
+      ${states.map((x) => x.matchesPlayed)}::int[],
+      ${states.map((x) => x.wins)}::int[],
+      ${states.map((x) => x.losses)}::int[],
+      ${states.map((x) => x.draws)}::int[]
+    ) as t(player_id, mu, sigma, matches_played, wins, losses, draws)
+    on conflict (player_id) do update set
+      mu = excluded.mu, sigma = excluded.sigma,
+      matches_played = excluded.matches_played, wins = excluded.wins,
+      losses = excluded.losses, draws = excluded.draws,
+      updated_at = now()
+  `;
+}
+
+/**
+ * Rebuild the house-wide ladder by replaying *every* game's match log as one
+ * sequence.
+ *
+ * The rating engine never looks at which game a match belongs to, so this is
+ * the same projection as `recomputeGame` with the filter removed: one rating
+ * per player, earned against everyone they have ever played, in whatever they
+ * played. It is what makes a win worth what the opponent is worth house-wide
+ * rather than what they are worth at that one game.
+ */
+export async function recomputeOverall(): Promise<void> {
+  const rows = await q`
+    select m.id, m.played_at, mt.team_index, mt.rank, mp.player_id
+    from matches m
+    join match_teams mt on mt.match_id = m.id
+    left join match_players mp on mp.match_id = m.id and mp.team_index = mt.team_index
+    where not m.voided
+    order by m.played_at asc, m.id asc, mt.team_index asc
+  `;
+
+  const { states } = replay(groupMatchInputs(rows));
+
+  const statements = [sql()`delete from overall_ratings`];
+  if (states.size > 0) statements.push(upsertOverall([...states.values()]));
+  await sql().transaction(statements);
+}
+
+/**
+ * Rate a freshly inserted match on the house-wide ladder.
+ *
+ * Mirrors `applyNewMatch`, with a stricter test for "is this the end of the
+ * log": a match can be the latest in its own game while another game has
+ * something later, and the overall ladder interleaves all of them. Anything
+ * not globally last falls back to the full replay.
+ */
+async function applyNewMatchOverall(matchId: string, playedAt: Date): Promise<void> {
+  const later = await q`
+    select 1 from matches
+    where not voided and id <> ${matchId}
+      and (played_at, id) > (${playedAt.toISOString()}, ${matchId}::uuid)
+    limit 1
+  `;
+  if (later.length > 0) {
+    await recomputeOverall();
+    return;
+  }
+
+  const match = await loadMatch(matchId, playedAt);
+  const playerIds = match.teams.flatMap((t) => t.playerIds);
+  if (playerIds.length === 0) return;
+
+  const existing = await q`
+    select player_id, mu, sigma, matches_played, wins, losses, draws
+    from overall_ratings
+    where player_id = any(${playerIds}::uuid[])
+  `;
+  const states = toStates(existing);
+
+  // `seq` only labels history rows, which the overall ladder does not keep.
+  const history = applyMatch(states, match, 0);
+  if (history.length === 0) return;
+
+  const touched = [...states.values()].filter((s) => playerIds.includes(s.playerId));
+  await upsertOverall(touched);
 }
 
 /** Pre-match odds for a proposed lineup, using current ratings. */

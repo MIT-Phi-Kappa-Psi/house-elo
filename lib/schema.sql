@@ -142,3 +142,30 @@ create table if not exists strikeouts (
 );
 create index if not exists strikeouts_player_idx on strikeouts (player_id, occurred_at desc);
 create index if not exists strikeouts_occurred_idx on strikeouts (occurred_at desc);
+
+-- ---------------------------------------------------------------------------
+-- Overall ratings. A single house-wide ladder: every match from every game
+-- replayed in one sequence, as though the house played one long game.
+--
+-- This is deliberately *not* an average of the per-game numbers. Averaging
+-- `ordinal` across games weights whichever game happens to spread its ratings
+-- widest, and it cannot tell dominating the house champion from dominating
+-- three freshmen. Pooling the matches instead means beating someone only helps
+-- in proportion to their own house-wide standing.
+--
+-- Derived, like `ratings`: drop it and `recomputeOverall()` rebuilds it. No
+-- history table to match `rating_history` — nothing reads a per-match overall
+-- delta yet, and doubling the largest table on a storage-capped database to
+-- store one is not worth it. It is a replay away if that changes.
+-- ---------------------------------------------------------------------------
+
+create table if not exists overall_ratings (
+  player_id      uuid primary key references players(id) on delete cascade,
+  mu             double precision not null,
+  sigma          double precision not null,
+  matches_played int not null default 0,
+  wins           int not null default 0,
+  losses         int not null default 0,
+  draws          int not null default 0,
+  updated_at     timestamptz not null default now()
+);

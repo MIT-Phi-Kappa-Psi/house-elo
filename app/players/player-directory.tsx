@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   mergePlayersAction,
@@ -9,21 +9,53 @@ import {
 } from "@/app/actions";
 import type { PlayerDirectoryRow } from "@/lib/queries";
 import { formatDate } from "@/lib/format";
+import {
+  DEFAULT_SORT,
+  METRICS,
+  isRanked,
+  metricFor,
+  rankPlayers,
+  type SortKey,
+} from "@/lib/player-ranking";
+
+/**
+ * Colour for the active number. Kept here rather than in `lib/player-ranking`,
+ * which owns what the ranking *means* and should not know about CSS.
+ */
+const TONES: Partial<Record<SortKey, (p: PlayerDirectoryRow) => string>> = {
+  // A rating still settling is shown, but greyed, so it does not read as a
+  // verdict — the same treatment the per-game leaderboards give it.
+  overall: (p) => (p.overallProvisional ? "text-[var(--color-muted)]" : ""),
+  laps: () => "text-[var(--color-warn)]",
+};
 
 export default function PlayerDirectory({
   players,
+  provisionalMatches,
 }: {
   players: PlayerDirectoryRow[];
+  /** Passed in rather than imported: `lib/queries` cannot cross to the client. */
+  provisionalMatches: number;
 }) {
   const [merging, setMerging] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortKey>(DEFAULT_SORT);
+
+  const active = metricFor(sort);
+  // The other three stay on the table as context, so switching the sort never
+  // hides a number that was on screen a moment ago.
+  const secondary = METRICS.filter((m) => m.key !== sort);
+
+  const ordered = useMemo(() => rankPlayers(players, sort), [players, sort]);
+
+  const anyProvisional = players.some((p) => p.overallProvisional);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--color-muted)]">
-          {players.length} {players.length === 1 ? "player" : "players"}, ranked by
-          naked laps
+          {players.length} {players.length === 1 ? "player" : "players"}, ranked by{" "}
+          {active.blurb}
         </p>
         {players.length >= 2 && (
           <button className="btn btn-ghost" onClick={() => setMerging((m) => !m)}>
@@ -32,29 +64,56 @@ export default function PlayerDirectory({
         )}
       </div>
 
+      <div
+        role="group"
+        aria-label="Rank players by"
+        className="flex flex-wrap gap-1 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-1"
+      >
+        {METRICS.map((metric) => (
+          <button
+            key={metric.key}
+            onClick={() => setSort(metric.key)}
+            aria-pressed={metric.key === sort}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              metric.key === sort
+                ? "bg-[var(--color-accent)] text-[var(--color-on-accent)]"
+                : "text-[var(--color-muted)] hover:bg-[var(--color-ink)]"
+            }`}
+          >
+            {metric.label}
+          </button>
+        ))}
+      </div>
+
       {merging && <MergePanel players={players} onDone={() => setMerging(false)} />}
 
       {players.length === 0 ? (
         <div className="panel px-5 py-10 text-center text-sm text-[var(--color-muted)]">
-          No players yet. They're created automatically the first time you name
+          No players yet. They&apos;re created automatically the first time you name
           someone in a match.
         </div>
       ) : (
         <div className="panel overflow-x-auto">
-          <table className="w-full min-w-[22rem] text-sm">
+          {/* 20rem clears a 375px phone inside the panel's padding; on a narrow
+              screen only the ranked metric is on show, so nothing is crushed. */}
+          <table className="w-full min-w-[20rem] text-sm">
             <thead className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
               <tr className="border-b border-[var(--color-line)]">
                 <th className="px-4 py-3 text-left font-medium">#</th>
                 <th className="px-4 py-3 text-left font-medium">Player</th>
-                <th className="whitespace-nowrap px-4 py-3 text-right font-medium">
-                  Laps
+                {/* The metric being sorted on never collapses on a narrow
+                    screen — it is the one number the ordering is claiming. */}
+                <th className="whitespace-nowrap px-4 py-3 text-right font-medium text-[var(--color-text)]">
+                  {active.column}
                 </th>
-                <th className="hidden px-4 py-3 text-right font-medium sm:table-cell">
-                  Matches
-                </th>
-                <th className="hidden px-4 py-3 text-right font-medium sm:table-cell">
-                  Games
-                </th>
+                {secondary.map((metric) => (
+                  <th
+                    key={metric.key}
+                    className="hidden px-4 py-3 text-right font-medium sm:table-cell"
+                  >
+                    {metric.column}
+                  </th>
+                ))}
                 <th className="hidden px-4 py-3 text-right font-medium md:table-cell">
                   Last played
                 </th>
@@ -62,10 +121,10 @@ export default function PlayerDirectory({
               </tr>
             </thead>
             <tbody>
-              {players.map((player, index) => (
+              {ordered.map((player, index) => (
                 <tr key={player.id} className="border-t border-[var(--color-line)]">
                   <td className="px-4 py-3 font-mono text-xs text-[var(--color-muted)]">
-                    {player.nakedLaps > 0 ? index + 1 : "–"}
+                    {isRanked(active, player) ? index + 1 : "–"}
                   </td>
                   <td className="px-4 py-3">
                     {editing === player.id ? (
@@ -74,21 +133,23 @@ export default function PlayerDirectory({
                       <span className="font-medium">{player.name}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-sm">
-                    {player.nakedLaps > 0 ? (
-                      <span className="font-semibold text-[var(--color-warn)]">
-                        {player.nakedLaps}
-                      </span>
-                    ) : (
-                      <span className="text-[var(--color-muted)]">0</span>
-                    )}
+                  <td
+                    className={`whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-semibold ${
+                      active.value(player) === null
+                        ? "text-[var(--color-muted)]"
+                        : (TONES[sort]?.(player) ?? "")
+                    }`}
+                  >
+                    {active.value(player) ?? "—"}
                   </td>
-                  <td className="hidden px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)] sm:table-cell">
-                    {player.matchesPlayed}
-                  </td>
-                  <td className="hidden px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)] sm:table-cell">
-                    {player.gamesPlayed}
-                  </td>
+                  {secondary.map((metric) => (
+                    <td
+                      key={metric.key}
+                      className="hidden px-4 py-3 text-right font-mono text-xs text-[var(--color-muted)] sm:table-cell"
+                    >
+                      {metric.value(player) ?? "—"}
+                    </td>
+                  ))}
                   <td className="hidden whitespace-nowrap px-4 py-3 text-right text-xs text-[var(--color-muted)] md:table-cell">
                     {player.lastPlayed ? formatDate(player.lastPlayed) : "—"}
                   </td>
@@ -109,13 +170,24 @@ export default function PlayerDirectory({
         </div>
       )}
 
-      <p className="text-xs text-[var(--color-muted)]">
-        Ratings live per game — open a game from{" "}
-        <Link href="/" className="underline hover:text-[var(--color-text)]">
-          Games
-        </Link>{" "}
-        to see a player's standing and history there.
-      </p>
+      <div className="space-y-1 text-xs text-[var(--color-muted)]">
+        <p>
+          Overall Elo is one ladder across every game: every match the house has
+          logged, replayed in order, so beating someone is worth what they are
+          worth house-wide rather than what they are worth at that one game. A
+          game&apos;s own standings and history live on{" "}
+          <Link href="/" className="underline hover:text-[var(--color-text)]">
+            its page
+          </Link>
+          .
+        </p>
+        {sort === "overall" && anyProvisional && (
+          <p>
+            Greyed ratings are still placing — under {provisionalMatches} matches
+            logged in total.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

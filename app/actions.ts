@@ -13,6 +13,7 @@ import {
   getPlayerById,
   mergePlayers,
   recomputeGame,
+  recomputeOverall,
   renamePlayer,
   setMatchVoided,
   createTicket,
@@ -149,6 +150,7 @@ export async function createMatchAction(
 
   await createMatch({ gameId: game.id, playedAt, note, teams });
   revalidatePath(`/games/${game.slug}`);
+  revalidatePath("/players");
   redirect(`/games/${game.slug}`);
 }
 
@@ -158,6 +160,7 @@ export async function voidMatchAction(formData: FormData): Promise<void> {
   const gameSlug = String(formData.get("gameSlug") ?? "");
   await setMatchVoided(matchId, voided);
   revalidatePath(`/games/${gameSlug}`);
+  revalidatePath("/players");
 }
 
 export async function recomputeAction(formData: FormData): Promise<void> {
@@ -165,7 +168,11 @@ export async function recomputeAction(formData: FormData): Promise<void> {
   const game = await getGame(gameSlug);
   if (!game) return;
   await recomputeGame(game.id);
+  // The house-wide ladder is built from this game's log too, so a repair here
+  // that did not also rebuild it would leave the two disagreeing.
+  await recomputeOverall();
   revalidatePath(`/games/${gameSlug}`);
+  revalidatePath("/players");
 }
 
 export async function renamePlayerAction(

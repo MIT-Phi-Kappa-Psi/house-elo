@@ -1,4 +1,4 @@
-import { listPlayerDirectory } from "@/lib/queries";
+import { listPlayerDirectory, PROVISIONAL_MATCHES } from "@/lib/queries";
 import PlayerDirectory from "./player-directory";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +11,12 @@ export default async function PlayersPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Players</h1>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Everyone who has appeared in a match, across every game, ranked by naked
-          laps owed. The list grows on its own as new names are entered.
+          Everyone who has appeared in a match, across every game. Rank them by
+          overall Elo, naked laps, matches or games. The list grows on its own as
+          new names are entered.
         </p>
       </div>
-      <PlayerDirectory players={players} />
+      <PlayerDirectory players={players} provisionalMatches={PROVISIONAL_MATCHES} />
     </div>
   );
 }

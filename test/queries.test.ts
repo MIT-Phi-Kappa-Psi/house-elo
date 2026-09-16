@@ -27,6 +27,7 @@ import {
   renamePlayer,
   previewOdds,
   recomputeGame,
+  recomputeOverall,
   setMatchVoided,
 } from "../lib/queries";
 
@@ -46,7 +47,8 @@ before(async () => {
 beforeEach(async () => {
   if (!url) return;
   await sql()`
-    truncate rating_history, ratings, match_players, match_teams, matches, players, games
+    truncate rating_history, ratings, overall_ratings,
+             match_players, match_teams, matches, players, games
     restart identity cascade
   `;
 });
@@ -630,7 +632,7 @@ test("a naked lap is stored on the team and read back with the match", opts, asy
   assert.equal(loser.nakedLap, true);
 });
 
-test("players are ranked by naked laps, most first", opts, async () => {
+test("the directory reports each player's naked laps", opts, async () => {
   const game = await pool();
   const [a, b, c] = [
     await findOrCreatePlayer("A"),
@@ -654,9 +656,10 @@ test("players are ranked by naked laps, most first", opts, async () => {
     });
   }
 
+  // The order the page shows is chosen client-side, so this only checks the
+  // counts; `player-ranking.test.ts` covers the ranking itself.
   const directory = await listPlayerDirectory();
-  assert.equal(directory[0].name, "B");
-  assert.equal(directory[0].nakedLaps, 2);
+  assert.equal(directory.find((p) => p.name === "B")!.nakedLaps, 2);
   assert.equal(directory.find((p) => p.name === "A")!.nakedLaps, 1);
   assert.equal(directory.find((p) => p.name === "C")!.nakedLaps, 0);
 });
@@ -964,4 +967,251 @@ test("renaming a player keeps their matches and rating", opts, async () => {
   const board = await getLeaderboard(game.id);
   assert.equal(board[0].name, "Jackson");
   assert.equal(board[0].displayRating, before);
+});
+
+/* -------------------------------------------------------------------------- */
+/* The overall ladder                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The house-wide rating each player is currently carrying, keyed by name.
+ * Comparing this before and after a `recomputeOverall()` is how these tests
+ * check the incremental append path against the definition of correctness.
+ */
+async function overallByName(): Promise<Record<string, number | null>> {
+  const rows = await listPlayerDirectory();
+  return Object.fromEntries(rows.map((r) => [r.name, r.overallRating]));
+}
+
+async function darts() {
+  return createGame({
+    name: "Darts",
+    minTeamSize: 1,
+    maxTeamSize: 1,
+    minTeamsPerMatch: 2,
+    maxTeamsPerMatch: 2,
+    allowsDraws: false,
+  });
+}
+
+test("the overall ladder pools every game's matches into one rating", opts, async () => {
+  const [pub, oche] = [await pool(), await darts()];
+  const [a, b, c] = [
+    await findOrCreatePlayer("A"),
+    await findOrCreatePlayer("B"),
+    await findOrCreatePlayer("C"),
+  ];
+
+  await createMatch({
+    gameId: pub.id,
+    playedAt: new Date(2026, 0, 1),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  await createMatch({
+    gameId: oche.id,
+    playedAt: new Date(2026, 0, 2),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [c.id] },
+    ],
+  });
+
+  const counts = await sql()`
+    select p.name, o.matches_played, o.wins, o.losses
+    from overall_ratings o join players p on p.id = o.player_id
+    order by p.name
+  `;
+  const byName = Object.fromEntries(counts.map((r) => [r.name as string, r]));
+
+  // A's two matches were played in two different games; the overall ladder
+  // does not care which, so it counts both.
+  assert.equal(Number(byName.A.matches_played), 2);
+  assert.equal(Number(byName.A.wins), 2);
+  assert.equal(Number(byName.B.matches_played), 1);
+  assert.equal(Number(byName.C.losses), 1);
+
+  const board = await overallByName();
+  assert.ok(board.A! > board.B!, "two wins across two games beats one loss");
+  assert.ok(board.A! > board.C!);
+});
+
+test("appending matches keeps the overall ladder equal to a full replay", opts, async () => {
+  const [pub, oche] = [await pool(), await darts()];
+  const [a, b, c] = [
+    await findOrCreatePlayer("A"),
+    await findOrCreatePlayer("B"),
+    await findOrCreatePlayer("C"),
+  ];
+
+  // Games interleaved in time, so the overall sequence is not either game's.
+  const fixtures = [
+    [pub, a, b],
+    [oche, b, c],
+    [pub, c, a],
+    [oche, a, c],
+    [pub, b, a],
+  ] as const;
+  let day = 1;
+  for (const [game, winner, loser] of fixtures) {
+    await createMatch({
+      gameId: game.id,
+      playedAt: new Date(2026, 0, day++),
+      teams: [
+        { rank: 1, playerIds: [winner.id] },
+        { rank: 2, playerIds: [loser.id] },
+      ],
+    });
+  }
+
+  const incremental = await overallByName();
+  await recomputeOverall();
+  assert.deepEqual(await overallByName(), incremental);
+});
+
+test("a match behind another game's latest replays the overall ladder", opts, async () => {
+  const [pub, oche] = [await pool(), await darts()];
+  const [a, b, c] = [
+    await findOrCreatePlayer("A"),
+    await findOrCreatePlayer("B"),
+    await findOrCreatePlayer("C"),
+  ];
+
+  await createMatch({
+    gameId: pub.id,
+    playedAt: new Date(2026, 0, 10),
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  // The first match in Darts, so its own game appends it — but it happened
+  // before the Pool match, so the overall ladder has to rebuild.
+  await createMatch({
+    gameId: oche.id,
+    playedAt: new Date(2026, 0, 5),
+    teams: [
+      { rank: 1, playerIds: [b.id] },
+      { rank: 2, playerIds: [c.id] },
+    ],
+  });
+
+  const afterInsert = await overallByName();
+  await recomputeOverall();
+  assert.deepEqual(await overallByName(), afterInsert);
+});
+
+test("voiding a match withdraws it from the overall ladder", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  const matchId = await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+  assert.ok((await overallByName()).A);
+
+  await setMatchVoided(matchId, true);
+  const after = await listPlayerDirectory();
+  assert.equal(after.find((p) => p.name === "A")!.overallRating, null);
+  assert.equal(after.find((p) => p.name === "B")!.overallRating, null);
+});
+
+test("a player with no ratable match has no overall rating", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  await findOrCreatePlayer("NeverPlayed");
+  await createMatch({
+    gameId: game.id,
+    teams: [
+      { rank: 1, playerIds: [a.id] },
+      { rank: 2, playerIds: [b.id] },
+    ],
+  });
+
+  const directory = await listPlayerDirectory();
+  assert.equal(directory.find((p) => p.name === "NeverPlayed")!.overallRating, null);
+  assert.ok(directory.find((p) => p.name === "A")!.overallRating);
+  // Unrated players sort last, so the default ordering never leads with them.
+  assert.notEqual(directory[0].name, "NeverPlayed");
+});
+
+test("under five matches an overall rating is still placing", opts, async () => {
+  const game = await pool();
+  const [a, b] = [await findOrCreatePlayer("A"), await findOrCreatePlayer("B")];
+  for (let day = 1; day <= 3; day++) {
+    await createMatch({
+      gameId: game.id,
+      playedAt: new Date(2026, 0, day),
+      teams: [
+        { rank: 1, playerIds: [a.id] },
+        { rank: 2, playerIds: [b.id] },
+      ],
+    });
+  }
+  assert.equal(
+    (await listPlayerDirectory()).find((p) => p.name === "A")!.overallProvisional,
+    true,
+  );
+
+  for (let day = 4; day <= 6; day++) {
+    await createMatch({
+      gameId: game.id,
+      playedAt: new Date(2026, 0, day),
+      teams: [
+        { rank: 1, playerIds: [a.id] },
+        { rank: 2, playerIds: [b.id] },
+      ],
+    });
+  }
+  assert.equal(
+    (await listPlayerDirectory()).find((p) => p.name === "A")!.overallProvisional,
+    false,
+  );
+});
+
+test("merging duplicates leaves one overall rating on the survivor", opts, async () => {
+  const [pub, oche] = [await pool(), await darts()];
+  const [real, typo, foe] = [
+    await findOrCreatePlayer("Jackson"),
+    await findOrCreatePlayer("Jakcson"),
+    await findOrCreatePlayer("Foe"),
+  ];
+  await createMatch({
+    gameId: pub.id,
+    playedAt: new Date(2026, 0, 1),
+    teams: [
+      { rank: 1, playerIds: [real.id] },
+      { rank: 2, playerIds: [foe.id] },
+    ],
+  });
+  await createMatch({
+    gameId: oche.id,
+    playedAt: new Date(2026, 0, 2),
+    teams: [
+      { rank: 1, playerIds: [typo.id] },
+      { rank: 2, playerIds: [foe.id] },
+    ],
+  });
+
+  await mergePlayers(typo.id, real.id);
+
+  const rows = await sql()`
+    select p.name, o.matches_played
+    from overall_ratings o join players p on p.id = o.player_id
+    order by p.name
+  `;
+  assert.deepEqual(
+    rows.map((r) => r.name),
+    ["Foe", "Jackson"],
+  );
+  assert.equal(Number(rows.find((r) => r.name === "Jackson")!.matches_played), 2);
+
+  const merged = await overallByName();
+  await recomputeOverall();
+  assert.deepEqual(await overallByName(), merged);
 });
